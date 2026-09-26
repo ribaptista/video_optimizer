@@ -219,8 +219,12 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
       }
       // conflict.kind === "skip": leave both files where they are.
 
+      // Archiving the original is independent of whether the promote above
+      // actually happened this run — even if the encode was left in place
+      // due to a conflict (declined, --on-existing skip, missing_both,
+      // dry-run), --move-originals still tucks the original away.
       let archived = false;
-      if (options.moveOriginals && promotedThisRow) {
+      if (options.moveOriginals) {
         try {
           const archiveDir = path.join(originalDir, "original_video");
           const archiveDest = path.join(archiveDir, path.basename(row.file_path));
@@ -251,9 +255,9 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
           }
           // origConflict.kind === "skip": leave the original where it is.
         } catch (err) {
-          // A failure archiving the original is secondary to the promote
-          // above having already succeeded — note it in conflict_resolution
-          // rather than demoting the whole row to "error".
+          // A failure archiving the original never demotes the row's
+          // primary finalize_action (deleted/promoted/skip_conflict) —
+          // note it in conflict_resolution instead.
           const message = err instanceof Error ? err.message : String(err);
           console.log(`[finalize] warning  failed to archive original ${row.file_path}: ${message}`);
           conflictCodes.push("archive:failed");

@@ -131,9 +131,11 @@ movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v2-opt42pct.mkv
   - `--on-existing ask` (the default) prompts interactively, once per conflicting file (`y` overwrites, anything else skips). If stdin isn't an interactive terminal, it logs a warning and defaults to skip rather than hanging. **`--dry-run` never prompts** — it logs what *would* be asked and treats it as skipped for the preview.
   - `--on-existing overwrite` replaces the destination without asking.
   - `--on-existing skip` leaves both files exactly where they are without asking.
-- **Neither exists** — if the file `finalize` would move is gone *and* nothing is at the destination either (e.g. the source was deleted or moved by something outside this tool), there's genuinely nothing to do: it's not treated as an error, just noted as `promote:missing_both` / `archive:missing_both` in `conflict_resolution`. For a promote this sets `finalize_action = skip_conflict`; for an archive it doesn't affect `finalize_action`, since the promote it's attached to already succeeded.
+- **Neither exists** — if the file `finalize` would move is gone *and* nothing is at the destination either (e.g. the source was deleted or moved by something outside this tool), there's genuinely nothing to do: it's not treated as an error, just noted as `promote:missing_both` / `archive:missing_both` in `conflict_resolution`. For a promote this sets `finalize_action = skip_conflict`; an archive's outcome is tracked separately in `original_archived` and never affects `finalize_action` (see below).
 
-A row left unresolved (a genuine conflict declined or `--on-existing skip`, a dry-run "would ask", or the "neither exists" case above) gets `finalize_action = skip_conflict` — the encoded file (and/or the original), if either still exists, is left in place for you to sort out manually or re-run with a decision.
+A row left unresolved (a genuine conflict declined or `--on-existing skip`, a dry-run "would ask", or the "neither exists" case above) gets `finalize_action = skip_conflict` — the encoded file, if it still exists, is left in place for you to sort out manually or re-run with a decision.
+
+**Archiving the original with `--move-originals` is independent of whether the promote step actually happened this row.** Even when the promote is left unresolved (`skip_conflict` for any reason above), `finalize` still attempts to archive the original into `./original_video/` — the two files are moved separately, so a conflict on one doesn't block the other. `original_archived` in the CSV always reflects the real outcome of the archive attempt for that row, regardless of `finalize_action`.
 
 ## CSV schemas
 
