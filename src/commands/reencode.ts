@@ -47,6 +47,20 @@ function rowProgressBytes(row: ScanRow, sampleSeconds: number | undefined): numb
   return estimateSampleBytes(row, sampleSeconds);
 }
 
+// A source shorter than the requested --sample duration gets fully
+// encoded anyway (the -ss/-t offset math clamps to the real duration),
+// so treat that row as a genuine full encode rather than a sample: use
+// the real file size for size_optimization_pct (accurate, not an
+// estimate) and leave sample_seconds blank, so finalize can promote it
+// like any other complete encode instead of refusing it as a preview
+// clip it never actually was.
+function effectiveSampleSeconds(row: ScanRow, sampleSeconds: number | undefined): number | undefined {
+  if (sampleSeconds === undefined) return undefined;
+  const duration = Number(row.duration_seconds) || 0;
+  if (duration > 0 && sampleSeconds >= duration) return undefined;
+  return sampleSeconds;
+}
+
 export async function runReencode(options: ReencodeOptions): Promise<void> {
   if (options.onExisting !== "warn" && options.onExisting !== "skip") {
     throw new Error(`--on-existing must be "warn" or "skip", got "${options.onExisting}"`);
@@ -65,8 +79,13 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
   // am I", so a skip/error still counts as "processed" for the purpose of
   // the remaining-bytes estimate. In --sample mode this is based on the
   // estimated sample-slice size per file (rowProgressBytes), not the full
-  // file size, since that's the actual amount of work being done per file.
-  const totalBytes = scanRows.reduce((sum, r) => sum + rowProgressBytes(r, options.sampleSeconds), 0);
+  // file size, since that's the actual amount of work being done per file
+  // — except for a file shorter than the sample duration, which gets
+  // fully encoded anyway (see effectiveSampleSeconds).
+  const totalBytes = scanRows.reduce(
+    (sum, r) => sum + rowProgressBytes(r, effectiveSampleSeconds(r, options.sampleSeconds)),
+    0,
+  );
   const runStart = Date.now();
   let processedBytes = 0;
 
@@ -84,11 +103,16 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     // sample-slice size in --sample mode) for both the running MB/s & ETA
     // stats and the size_optimization_pct comparison below.
     const fullSizeBytes = Number(row.file_size_bytes) || 0;
-    const progressBytes = rowProgressBytes(row, options.sampleSeconds);
+    // A file shorter than --sample gets fully encoded regardless (see
+    // effectiveSampleSeconds), so it's treated as a plain full encode for
+    // filename hashing, comparison, and the sample_seconds column — not
+    // as a (misleadingly-labeled) sample.
+    const rowSample = effectiveSampleSeconds(row, options.sampleSeconds);
+    const progressBytes = rowProgressBytes(row, rowSample);
 
     if (row.scan_result !== "ok") {
       console.log(`[reencode] skip_scan_error  ${row.file_path}`);
-      writer.writeRow(passthroughRow(row, "skip_scan_error", row.scan_error, "", "", options.sampleSeconds));
+      writer.writeRow(passthroughRow(row, "skip_scan_error", row.scan_error, "", "", rowSample));
       skipScanCount++;
       processedBytes += progressBytes;
       continue;
@@ -96,7 +120,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
 
     if (options.minSizeBytes > 0 && fullSizeBytes < options.minSizeBytes) {
       console.log(`[reencode] skip_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`);
-      writer.writeRow(passthroughRow(row, "skip_size", "", "", "", options.sampleSeconds));
+      writer.writeRow(passthroughRow(row, "skip_size", "", "", "", rowSample));
       skipSizeCount++;
       processedBytes += progressBytes;
       continue;
@@ -106,7 +130,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     // profile id (+ sample duration, if any), so a file already sitting
     // there is exactly what a prior run of this same file/profile/sample
     // would have produced.
-    const existingPath = getOutputPath(row, options.outputDir, options.sampleSeconds);
+    const existingPath = getOutputPath(row, options.outputDir, rowSample);
     const existingStat = await stat(existingPath).catch(() => null);
 
     if (existingStat) {
@@ -121,11 +145,11 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
           output_file_size_bytes: String(existingStat.size),
           size_optimization_pct: optimizationPct.toFixed(2),
           profile_id: ENCODING_PROFILE.id,
-          ffmpeg_command: buildFfmpegCommand(row, options.outputDir, options.sampleSeconds),
+          ffmpeg_command: buildFfmpegCommand(row, options.outputDir, rowSample),
           reencode_action: "reuse",
           reencode_result: "ok",
           reencode_error: "",
-          sample_seconds: options.sampleSeconds !== undefined ? String(options.sampleSeconds) : "",
+          sample_seconds: rowSample !== undefined ? String(rowSample) : "",
         });
         skipExistsCount++;
         processedBytes += progressBytes;
@@ -136,11 +160,11 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
 
     console.log(`[reencode] start  ${row.file_path}`);
     const rowStart = Date.now();
-    const encodeResult = await encodeVideo(row, options.outputDir, options.sampleSeconds);
+    const encodeResult = await encodeVideo(row, options.outputDir, rowSample);
     if (!encodeResult.ok) {
       console.log(`[reencode] error  ${row.file_path}: ${encodeResult.errorSummary}`);
       writer.writeRow(
-        passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command, "reencode", options.sampleSeconds),
+        passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command, "reencode", rowSample),
       );
       errorCount++;
       processedBytes += progressBytes;
@@ -178,7 +202,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       reencode_action: "reencode",
       reencode_result: "ok",
       reencode_error: "",
-      sample_seconds: options.sampleSeconds !== undefined ? String(options.sampleSeconds) : "",
+      sample_seconds: rowSample !== undefined ? String(rowSample) : "",
     });
     okCount++;
   }
