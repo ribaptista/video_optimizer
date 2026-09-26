@@ -1,7 +1,7 @@
 # video-optimizer
 
 A three-stage CLI for shrinking a video library's storage footprint:
-**scan** a directory for video files → **reencode** them with one fixed, versioned encoding profile → **finalize** by keeping only the encodes that actually saved enough space.
+**scan** a directory for video files → **reencode** them with one fixed, versioned encoding profile → **finalize** by promoting only the encodes that actually saved enough space (never deleting anything — low-gain encodes are simply left in place).
 
 Every stage is fully auditable: every input row always produces exactly one output row, tagged with a per-stage result column, so the final CSV is a complete trail from source file to final outcome.
 
@@ -27,13 +27,13 @@ Requires `ffmpeg`/`ffprobe` on `PATH`. This profile was designed against ffmpeg/
 scan <dir>                       reencode                          finalize
   │  walks dir recursively         │  reads scan CSV                  │  reads reencode CSV
   │  runs ffprobe per file         │  runs ffmpeg per "ok" row         │  per row:
-  │  writes video-scan.csv    ───► │  (skips scan errors / too-small   │    below threshold  -> delete encode
+  │  writes video-scan.csv    ───► │  (skips scan errors / too-small   │    below threshold  -> skip (left as-is)
   │  (one row per file,            │   files, but records them too)    │    at/above threshold -> move encode
   │   ok or error)                 │  writes reencode-results.csv      │      next to original, suffixed with
   │                                │  (adds output path/size/%,        │      profile id + achieved % savings
   │                                │   ok/error/skip_size/              │    optionally archive original into
   │                                │   skip_scan_error)                 │      ./original_video (sibling dir)
-  │                                │                                   │  writes finalize-results.csv
+  │                                │                                   │  writes finalize-results.csv (never deletes)
 ```
 
 `reencode` skips re-running ffmpeg on a row whose deterministic output file already exists when `--on-existing skip` is passed (resuming a previous run) — see the `reencode` command below.
@@ -112,7 +112,7 @@ node dist/cli.js reencode --input scan.csv --output-dir ./preview --sample 10s  
 
 - **Fair size comparison**: `size_optimization_pct` on a sample row doesn't compare the sample output against the *whole* input file size (which would be a wildly inflated, meaningless "% smaller"). Instead it estimates what that slice of the *original* would have taken up — `video_bit_rate × sample_seconds / 8` (falling back to `overall_bit_rate`, then a plain file-size/duration ratio, if bitrate isn't known) — and compares the real sample output size against that. The MB/s and ETA progress stats are based on this same per-file estimate in `--sample` mode, not full file sizes, since that's the actual amount of work being done per file.
 - **Never collides with a full encode**: the output filename hash includes the sample duration, so `--sample 10s` output never overwrites (or gets mistaken for, under `--on-existing skip`) a full-length encode of the same file, and a different `--sample` duration gets its own filename too.
-- **`finalize` refuses to act on sample rows** — a row with `sample_seconds` set always gets `finalize_action = skip_sample`, never deleted or promoted. Promoting a few seconds of preview footage into place as if it were the real re-encode would be actively destructive (especially combined with `--move-originals`), so re-run `reencode` on a file without `--sample` before finalizing it.
+- **`finalize` refuses to act on sample rows** — a row with `sample_seconds` set always gets `finalize_action = skip_sample`, never promoted. Promoting a few seconds of preview footage into place as if it were the real re-encode would be actively destructive (especially combined with `--move-originals`), so re-run `reencode` on a file without `--sample` before finalizing it.
 - **A file shorter than the requested sample gets fully encoded, and is treated as a full encode, not a sample.** If `--sample 10s` is used but a file is only 4 seconds long, the whole file is encoded (there's nothing else to trim to), `size_optimization_pct` is computed from the real output size vs. the real input size (not the bitrate estimate), `sample_seconds` is left **blank** for that row, and `finalize` can promote it normally — it genuinely isn't a partial preview for that file, so it isn't labeled or treated as one.
 - **Extrapolated full-file projection**: on a genuine sample row (`sample_seconds` non-blank), three extra columns project the sample's observed compression ratio onto the *whole* file — `extrapolated_reencoded_size_bytes` (estimated full-file output size), `extrapolated_size_optimization_pct` (comes out numerically equal to `size_optimization_pct`, since it's the same ratio just scaled — included so it's there without recomputing it), and `extrapolated_size_optimization_bytes` (estimated bytes saved for the whole file: `file_size_bytes - extrapolated_reencoded_size_bytes`). This assumes the sampled slice is representative of the whole file's compressibility — the same assumption `--sample` is built on. All three are blank for non-sample rows, where the real `size_optimization_pct`/sizes already answer this directly.
 
@@ -120,12 +120,13 @@ node dist/cli.js reencode --input scan.csv --output-dir ./preview --sample 10s  
 
 ### `finalize`
 
-Reads a `reencode` CSV and, per row, either deletes the encode (below threshold) or promotes it next to the original file (at/above threshold).
+Reads a `reencode` CSV and, per row, either promotes the encode next to the original file (at/above threshold) or leaves it exactly where it is (below threshold, or filtered out by `--min-size-bytes`). **`finalize` never deletes anything** — a low-gain encode is simply skipped and left sitting in the `reencode` output directory for you to review or clean up manually.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-i, --input <path>` | *required* | CSV produced by `reencode` |
-| `-t, --threshold <percent>` | *required* | minimum % size optimization required to keep an encode |
+| `-t, --threshold <percent>` | *required* | minimum % size optimization required to promote an encode; below this it's skipped (left untouched), not deleted |
+| `-m, --min-size-bytes <n>` | `0` (disabled) | skip (leave untouched) rows whose **original** source file — not the encode — is smaller than this size |
 | `--move-originals` | `false` | also move the original file into a sibling `./original_video/` directory |
 | `--dry-run` | `false` | print planned actions without touching the filesystem |
 | `-o, --output <path>` | `./finalize-results.csv` | output CSV path |
@@ -134,6 +135,7 @@ Reads a `reencode` CSV and, per row, either deletes the encode (below threshold)
 ```bash
 node dist/cli.js finalize --input reencode-results.csv --threshold 20 --move-originals --dry-run
 node dist/cli.js finalize --input reencode-results.csv --threshold 20 --move-originals
+node dist/cli.js finalize --input reencode-results.csv --threshold 20 --min-size-bytes 10485760   # skip tiny originals too
 ```
 
 A promoted file is renamed to `<original-basename>.reencoded-<profile-id>-opt<N>pct<encoded-extension>`, e.g.:
@@ -144,7 +146,7 @@ movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v2-opt42pct.mkv
 
 **`finalize` is resumable and re-runnable, like `reencode`.** Because the promoted filename and the archived-original path are both fully deterministic (derived from the source path, profile id, and achieved %), re-running `finalize` over the same (or an updated) CSV is safe:
 
-- **Already done, nothing to conflict with** — if the file `finalize` would move (the re-encoded output for a promote, or the original for an archive) no longer exists, but the expected destination already exists, it's treated as already completed by a previous run: a warning is printed (even during `--dry-run`), the row is still recorded with its normal `finalize_action` (`deleted`/`promoted`), and `conflict_resolution` notes `promote:already_done`, `archive:already_done`, or `delete:already_done`.
+- **Already done, nothing to conflict with** — if the re-encoded output for a promote (or the original for an archive) no longer exists, but the expected destination already exists, it's treated as already completed by a previous run: a warning is printed (even during `--dry-run`), the row is still recorded with `finalize_action = promoted`, and `conflict_resolution` notes `promote:already_done` and/or `archive:already_done`.
 - **Genuine conflict** — if the file to move *and* something already at the destination *both* exist, `finalize` needs a decision:
   - `--on-existing ask` (the default) prompts interactively, once per conflicting file (`y` overwrites, anything else skips). If stdin isn't an interactive terminal, it logs a warning and defaults to skip rather than hanging. **`--dry-run` never prompts** — it logs what *would* be asked and treats it as skipped for the preview.
   - `--on-existing overwrite` replaces the destination without asking.
@@ -218,8 +220,8 @@ All `reencode` columns above, plus:
 
 | Column | Meaning |
 |---|---|
-| `finalize_action` | `deleted`, `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_conflict` (a destination conflict was left unresolved — see below), `skip_sample` (row is a `--sample` preview, never deleted or promoted), or `error` |
-| `conflict_resolution` | blank on the ordinary happy path; otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `delete`, `promote`, `archive`. Codes: `already_done`, `missing_both` (neither the file to move nor the destination exists — nothing to do, not an error), `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, an unexpected error secondary to a successful promote) |
+| `finalize_action` | `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_sample` (row is a `--sample` preview), `skip_min_size` (original file below `--min-size-bytes`), `skip_below_threshold` (size_optimization_pct below `--threshold` — the encode is left in place, **not deleted**), `skip_conflict` (a destination conflict was left unresolved — see below), or `error` |
+| `conflict_resolution` | blank on the ordinary happy path (including a plain `skip_below_threshold`, `skip_min_size`, `skip_sample`, or `skip_not_encoded` row); otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `promote`, `archive`. Codes: `already_done`, `missing_both` (neither the file to move nor the destination exists — nothing to do, not an error), `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, an unexpected error secondary to a successful promote) |
 | `finalize_error` | error text if `finalize_action = error` |
 | `original_archived` | `true`/`false` — whether the source file ended up archived (freshly, or already archived from a previous run) for this row |
 

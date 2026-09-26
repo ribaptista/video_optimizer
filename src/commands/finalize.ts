@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, unlink, stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { readCsv, CsvWriter } from "../lib/csv.js";
 import { moveFile } from "../lib/moveFile.js";
@@ -10,6 +10,7 @@ export type OnExistingFinalize = "ask" | "overwrite" | "skip";
 export interface FinalizeOptions {
   input: string;
   threshold: number;
+  minSizeBytes: number;
   moveOriginals: boolean;
   dryRun: boolean;
   output: string;
@@ -126,11 +127,12 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
   );
 
   const writer = new CsvWriter<FinalizeRow>(options.output, FINALIZE_COLUMNS);
-  let deleted = 0;
   let promoted = 0;
   let skipConflict = 0;
   let skipped = 0;
   let skipSample = 0;
+  let skipMinSize = 0;
+  let skipBelowThreshold = 0;
   let errored = 0;
 
   for (const row of rows) {
@@ -148,10 +150,10 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
     }
 
     // A --sample row is a short preview clip, not a full re-encode — never
-    // let it flow into the delete/promote logic below, since "promoting"
-    // it would rename a few seconds of preview footage into place as if
-    // it were the real re-encoded file. Re-run reencode on this file
-    // without --sample first.
+    // let it flow into the promote logic below, since "promoting" it
+    // would rename a few seconds of preview footage into place as if it
+    // were the real re-encoded file. Re-run reencode on this file without
+    // --sample first.
     if (row.sample_seconds) {
       console.log(
         `[finalize] skip_sample  ${row.file_path} (this is a ${row.sample_seconds}s sample preview, not a full re-encode)`,
@@ -167,37 +169,42 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
       continue;
     }
 
+    // Filters by the ORIGINAL source file's size (not the encode) — skip
+    // finalizing anything that was never big enough to bother with in the
+    // first place, mirroring reencode's own --min-size-bytes.
+    const fullSizeBytes = Number(row.file_size_bytes) || 0;
+    if (options.minSizeBytes > 0 && fullSizeBytes < options.minSizeBytes) {
+      console.log(`[finalize] skip_min_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`);
+      writer.writeRow({
+        ...row,
+        finalize_action: "skip_min_size",
+        conflict_resolution: "",
+        finalize_error: "",
+        original_archived: "false",
+      });
+      skipMinSize++;
+      continue;
+    }
+
     const optimizationPct = Number(row.size_optimization_pct);
 
     try {
       if (optimizationPct < options.threshold) {
-        if (!(await pathExists(row.output_file_path))) {
-          console.log(
-            `[finalize] warning  ${row.output_file_path} no longer exists — treating as already deleted from a previous run`,
-          );
-          writer.writeRow({
-            ...row,
-            finalize_action: "deleted",
-            conflict_resolution: "delete:already_done",
-            finalize_error: "",
-            original_archived: "false",
-          });
-          deleted++;
-          continue;
-        }
-
-        if (options.dryRun) {
-          console.log(
-            `[finalize] dry-run would delete  ${row.output_file_path} (${optimizationPct.toFixed(1)}% < ${options.threshold}%)`,
-          );
-        } else {
-          await unlink(row.output_file_path);
-          console.log(
-            `[finalize] deleted  ${row.output_file_path} (${optimizationPct.toFixed(1)}% < ${options.threshold}%)`,
-          );
-        }
-        writer.writeRow({ ...row, finalize_action: "deleted", conflict_resolution: "", finalize_error: "", original_archived: "false" });
-        deleted++;
+        // Below the threshold: leave the encoded file exactly where it
+        // is — finalize never deletes anything. The row is simply
+        // skipped, so a low-value encode sits untouched in the reencode
+        // output directory for you to review or clean up manually.
+        console.log(
+          `[finalize] skip_below_threshold  ${row.output_file_path} (${optimizationPct.toFixed(1)}% < ${options.threshold}%)`,
+        );
+        writer.writeRow({
+          ...row,
+          finalize_action: "skip_below_threshold",
+          conflict_resolution: "",
+          finalize_error: "",
+          original_archived: "false",
+        });
+        skipBelowThreshold++;
         continue;
       }
 
@@ -306,7 +313,7 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
 
   await writer.close();
   console.log(
-    `[finalize] done: ${deleted} deleted, ${promoted} promoted, ${skipConflict} skip_conflict, ${skipped} skip_not_encoded, ${skipSample} skip_sample, ${errored} error, wrote ${options.output}${
+    `[finalize] done: ${promoted} promoted, ${skipBelowThreshold} skip_below_threshold, ${skipMinSize} skip_min_size, ${skipConflict} skip_conflict, ${skipped} skip_not_encoded, ${skipSample} skip_sample, ${errored} error, wrote ${options.output}${
       options.dryRun ? " (dry run — no files were changed)" : ""
     }`,
   );

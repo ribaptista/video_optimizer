@@ -94,7 +94,14 @@ export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
 ];
 
 export interface FinalizeRow extends ReencodeRow {
-  finalize_action: "deleted" | "promoted" | "skip_not_encoded" | "skip_conflict" | "skip_sample" | "error";
+  finalize_action:
+    | "promoted"
+    | "skip_not_encoded"
+    | "skip_sample"
+    | "skip_min_size"
+    | "skip_below_threshold"
+    | "skip_conflict"
+    | "error";
   conflict_resolution: string;
   finalize_error: string;
   original_archived: "true" | "false";

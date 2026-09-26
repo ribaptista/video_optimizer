@@ -76,10 +76,11 @@ program
 program
   .command("finalize")
   .description(
-    "Using a reencode-results CSV and a % size-optimization threshold, delete low-gain encodes or promote the rest next to their originals",
+    "Using a reencode-results CSV and a % size-optimization threshold, promote encodes that clear it next to their originals (never deletes anything; low-gain encodes are just skipped and left in place)",
   )
   .requiredOption("-i, --input <path>", "input CSV produced by the reencode command")
-  .requiredOption("-t, --threshold <percent>", "minimum % size optimization required to keep an encode")
+  .requiredOption("-t, --threshold <percent>", "minimum % size optimization required to promote an encode; below this it's skipped, not deleted")
+  .option("-m, --min-size-bytes <n>", "skip (leave untouched) rows whose original source file is smaller than this size in bytes", "0")
   .option("--move-originals", "also move the original file into a sibling ./original_video directory", false)
   .option("--dry-run", "print planned actions without touching the filesystem", false)
   .option("-o, --output <path>", "output CSV path", "./finalize-results.csv")
@@ -96,6 +97,7 @@ program
     async (opts: {
       input: string;
       threshold: string;
+      minSizeBytes: string;
       moveOriginals: boolean;
       dryRun: boolean;
       output: string;
@@ -104,6 +106,7 @@ program
       await runFinalize({
         input: opts.input,
         threshold: Number(opts.threshold),
+        minSizeBytes: Number(opts.minSizeBytes),
         moveOriginals: opts.moveOriginals,
         dryRun: opts.dryRun,
         output: opts.output,
