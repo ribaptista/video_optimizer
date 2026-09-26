@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { runScan } from "./commands/scan.js";
+import { runReencode } from "./commands/reencode.js";
 
 const program = new Command();
 
@@ -19,6 +20,22 @@ program
       directory,
       output: opts.output,
       concurrency: Number(opts.concurrency),
+    });
+  });
+
+program
+  .command("reencode")
+  .description("Re-encode each file listed in a scan CSV with the fixed encoding profile")
+  .requiredOption("-i, --input <path>", "input CSV produced by the scan command")
+  .requiredOption("-d, --output-dir <path>", "directory to write re-encoded files into")
+  .option("-o, --output <path>", "output CSV path", "./reencode-results.csv")
+  .option("-m, --min-size-bytes <n>", "skip files smaller than this size in bytes", "0")
+  .action(async (opts: { input: string; outputDir: string; output: string; minSizeBytes: string }) => {
+    await runReencode({
+      input: opts.input,
+      outputDir: opts.outputDir,
+      output: opts.output,
+      minSizeBytes: Number(opts.minSizeBytes),
     });
   });
 

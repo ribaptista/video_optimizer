@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { parse } from "csv-parse";
 import { stringify } from "csv-stringify/sync";
 
-export async function readCsv<T extends Record<string, string>>(filePath: string): Promise<T[]> {
+export async function readCsv<T extends object>(filePath: string): Promise<T[]> {
   const rows: T[] = [];
   const parser = createReadStream(filePath).pipe(
     parse({ columns: true, skip_empty_lines: true }),
