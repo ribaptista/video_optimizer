@@ -4,7 +4,7 @@
 // `finalize` command's output filename suffix embed this id, so an id
 // change is how the pipeline tells old encodes apart from new ones.
 export const ENCODING_PROFILE = {
-  id: "h264-crf20-slow-yuv420p-v1",
+  id: "h264-crf20-slow-yuv420p-v2",
   video: {
     codec: "libx264",
     preset: "slow",
@@ -13,7 +13,7 @@ export const ENCODING_PROFILE = {
   },
   audio: {
     pcmReencodeCodec: "aac",
-    pcmReencodeBitrate: "192k",
+    pcmReencodeBitrate: "256k",
   },
   container: "mkv",
 } as const;

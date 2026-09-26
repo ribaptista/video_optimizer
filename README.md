@@ -46,13 +46,13 @@ Defined once in [`src/profile.ts`](src/profile.ts) as `ENCODING_PROFILE`. Its `i
 
 | Parameter | Value |
 |---|---|
-| Profile id | `h264-crf20-slow-yuv420p-v1` |
+| Profile id | `h264-crf20-slow-yuv420p-v2` |
 | Video codec | `libx264` |
 | Preset | `slow` |
 | CRF | `20` |
 | Pixel format | `yuv420p` (8-bit, 4:2:0 — fixed regardless of source, for maximum playback compatibility) |
 | Container | `mkv` |
-| Audio (PCM source) | re-encoded to `aac` @ `192k` |
+| Audio (PCM source) | re-encoded to `aac` @ `256k` |
 | Audio (non-PCM source) | stream-copied unchanged (already-compressed audio isn't worth re-encoding for negligible size savings) |
 | Subtitles | stream-copied unchanged |
 | Metadata / chapters | copied from source (`-map_metadata 0 -map_chapters 0`) |
@@ -109,7 +109,7 @@ node dist/cli.js finalize --input reencode-results.csv --threshold 20 --move-ori
 A promoted file is renamed to `<original-basename>.reencoded-<profile-id>-opt<N>pct<encoded-extension>`, e.g.:
 
 ```
-movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v1-opt42pct.mkv
+movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v2-opt42pct.mkv
 ```
 
 ## CSV schemas
