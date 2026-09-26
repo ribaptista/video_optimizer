@@ -67,8 +67,9 @@ Defined once in [`src/profile.ts`](src/profile.ts) as `ENCODING_PROFILE`. Its `i
 
 Recursively finds video files (`.mp4 .mkv .mov .avi .wmv .flv .webm .m4v .mpg .mpeg .ts .m2ts .3gp .vob .ogv`) and probes each with `ffprobe`.
 
-| Flag | Default | Meaning |
+| Argument / Flag | Default | Meaning |
 |---|---|---|
+| `<directory>` | *required* | directory to scan recursively (positional argument) |
 | `-o, --output <path>` | `./video-scan.csv` | output CSV path |
 | `-c, --concurrency <n>` | `4` | concurrent `ffprobe` processes |
 
@@ -153,15 +154,21 @@ Each stage's CSV re-emits **every column from its input row** plus its own new c
 | `pix_fmt` | first video stream's pixel format |
 | `bit_depth` | derived from `pix_fmt` (e.g. `8`, `10`) |
 | `chroma_subsampling` | derived from `pix_fmt` (e.g. `4:2:0`) |
-| `width` / `height` | video dimensions |
+| `width` | video width, pixels |
+| `height` | video height, pixels |
 | `frame_rate` | average frame rate, decimal |
 | `video_bit_rate` | first video stream's bit rate |
-| `color_primaries` / `color_transfer` / `color_space` | color metadata, when present |
+| `color_primaries` | color primaries tag, when present |
+| `color_transfer` | color transfer characteristic tag, when present |
+| `color_space` | color space/matrix tag, when present |
 | `rotation` | rotation tag/side-data, degrees (`0` if none) |
 | `audio_codec` | first audio stream's codec name |
 | `audio_is_pcm` | `true`/`false` — whether the first audio stream is a `pcm_*` codec |
-| `audio_sample_rate` / `audio_channels` / `audio_bit_rate` | first audio stream's properties |
-| `audio_stream_count` / `subtitle_stream_count` | how many audio/subtitle streams the file has |
+| `audio_sample_rate` | first audio stream's sample rate |
+| `audio_channels` | first audio stream's channel count |
+| `audio_bit_rate` | first audio stream's bit rate |
+| `audio_stream_count` | how many audio streams the file has |
+| `subtitle_stream_count` | how many subtitle streams the file has |
 | `scan_result` | `ok` or `error` |
 | `scan_error` | ffprobe error text when `scan_result = error` (metadata columns are blank in that case) |
 
