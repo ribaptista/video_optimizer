@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { runScan } from "./commands/scan.js";
-import { runReencode } from "./commands/reencode.js";
+import { runReencode, type OnExisting } from "./commands/reencode.js";
 import { runFinalize } from "./commands/finalize.js";
 
 const program = new Command();
@@ -31,14 +31,26 @@ program
   .requiredOption("-d, --output-dir <path>", "directory to write re-encoded files into")
   .option("-o, --output <path>", "output CSV path", "./reencode-results.csv")
   .option("-m, --min-size-bytes <n>", "skip files smaller than this size in bytes", "0")
-  .action(async (opts: { input: string; outputDir: string; output: string; minSizeBytes: string }) => {
-    await runReencode({
-      input: opts.input,
-      outputDir: opts.outputDir,
-      output: opts.output,
-      minSizeBytes: Number(opts.minSizeBytes),
-    });
-  });
+  .addOption(
+    new Option(
+      "--on-existing <mode>",
+      "what to do when a file's deterministic output name already exists in --output-dir: " +
+        "'warn' overwrites it (with a warning); 'skip' reuses it as-is, resuming a previous run",
+    )
+      .choices(["warn", "skip"])
+      .default("warn"),
+  )
+  .action(
+    async (opts: { input: string; outputDir: string; output: string; minSizeBytes: string; onExisting: OnExisting }) => {
+      await runReencode({
+        input: opts.input,
+        outputDir: opts.outputDir,
+        output: opts.output,
+        minSizeBytes: Number(opts.minSizeBytes),
+        onExisting: opts.onExisting,
+      });
+    },
+  );
 
 program
   .command("finalize")

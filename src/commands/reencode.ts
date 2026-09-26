@@ -1,17 +1,24 @@
 import { mkdir, stat } from "node:fs/promises";
 import { readCsv, writeCsv } from "../lib/csv.js";
-import { encodeVideo } from "../lib/ffmpeg.js";
+import { encodeVideo, getOutputPath } from "../lib/ffmpeg.js";
 import { ENCODING_PROFILE } from "../profile.js";
 import { REENCODE_COLUMNS, type ScanRow, type ReencodeRow } from "../types.js";
+
+export type OnExisting = "warn" | "skip";
 
 export interface ReencodeOptions {
   input: string;
   outputDir: string;
   output: string;
   minSizeBytes: number;
+  onExisting: OnExisting;
 }
 
 export async function runReencode(options: ReencodeOptions): Promise<void> {
+  if (options.onExisting !== "warn" && options.onExisting !== "skip") {
+    throw new Error(`--on-existing must be "warn" or "skip", got "${options.onExisting}"`);
+  }
+
   const scanRows = await readCsv<ScanRow>(options.input);
   await mkdir(options.outputDir, { recursive: true });
 
@@ -22,6 +29,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
   let errorCount = 0;
   let skipSizeCount = 0;
   let skipScanCount = 0;
+  let skipExistsCount = 0;
 
   for (const row of scanRows) {
     if (row.scan_result !== "ok") {
@@ -37,6 +45,34 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       results.push(passthroughRow(row, "skip_size", ""));
       skipSizeCount++;
       continue;
+    }
+
+    // The output filename is a deterministic hash of the source path +
+    // profile id, so a file already sitting there is exactly what a prior
+    // run of this same file/profile would have produced.
+    const existingPath = getOutputPath(row, options.outputDir);
+    const existingStat = await stat(existingPath).catch(() => null);
+
+    if (existingStat) {
+      if (options.onExisting === "skip") {
+        const optimizationPct = (1 - existingStat.size / sizeBytes) * 100;
+        console.log(
+          `[reencode] skip_exists  ${row.file_path} (reusing ${existingPath} from a previous run)`,
+        );
+        results.push({
+          ...row,
+          output_file_path: existingPath,
+          output_file_size_bytes: String(existingStat.size),
+          size_optimization_pct: optimizationPct.toFixed(2),
+          profile_id: ENCODING_PROFILE.id,
+          ffmpeg_command: "",
+          reencode_result: "ok",
+          reencode_error: "",
+        });
+        skipExistsCount++;
+        continue;
+      }
+      console.log(`[reencode] warning  output already exists and will be overwritten: ${existingPath}`);
     }
 
     console.log(`[reencode] start  ${row.file_path}`);
@@ -68,7 +104,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
 
   await writeCsv(options.output, REENCODE_COLUMNS, results);
   console.log(
-    `[reencode] done: ${okCount} ok, ${errorCount} error, ${skipSizeCount} skip_size, ${skipScanCount} skip_scan_error, wrote ${options.output}`,
+    `[reencode] done: ${okCount} ok, ${errorCount} error, ${skipSizeCount} skip_size, ${skipScanCount} skip_scan_error, ${skipExistsCount} skip_exists, wrote ${options.output}`,
   );
 }
 

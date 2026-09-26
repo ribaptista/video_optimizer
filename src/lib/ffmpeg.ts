@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, unlink } from "node:fs/promises";
 import { moveFile } from "./moveFile.js";
@@ -51,6 +51,20 @@ function summarizeFfmpegStderr(rawStderr: string): string {
   return relevant.join(" | ").slice(-2000);
 }
 
+// Deterministic filename: sha256(absolute source path + profile id). Same
+// source file + same profile always produces the same output filename,
+// which is what makes --on-existing skip a safe "resume" mechanism — a
+// second run recognizes exactly the file a prior run would have produced,
+// without needing any separate state tracking.
+export function getOutputFileName(row: ScanRow): string {
+  const hash = createHash("sha256").update(`${row.file_path}::${ENCODING_PROFILE.id}`).digest("hex").slice(0, 16);
+  return `${hash}.${ENCODING_PROFILE.container}`;
+}
+
+export function getOutputPath(row: ScanRow, outputDir: string): string {
+  return path.join(outputDir, getOutputFileName(row));
+}
+
 export async function encodeVideo(row: ScanRow, outputDir: string): Promise<EncodeResult> {
   // Encode into a temp subdirectory of outputDir first, and only move the
   // result into outputDir itself once ffmpeg has actually finished
@@ -59,7 +73,7 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
   const tempDir = path.join(outputDir, ".tmp");
   await mkdir(tempDir, { recursive: true });
 
-  const fileName = `${randomUUID()}.${ENCODING_PROFILE.container}`;
+  const fileName = getOutputFileName(row);
   const tempOutputPath = path.join(tempDir, fileName);
   const finalOutputPath = path.join(outputDir, fileName);
 

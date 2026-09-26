@@ -36,6 +36,8 @@ scan <dir>                       reencode                          finalize
   │                                │                                   │  writes finalize-results.csv
 ```
 
+`reencode` skips re-running ffmpeg on a row whose deterministic output file already exists when `--on-existing skip` is passed (resuming a previous run) — see the `reencode` command below.
+
 No step ever silently drops a row — a file that fails to probe, is skipped for being too small, fails to encode, or doesn't clear the optimization threshold still gets a row in that stage's output CSV explaining what happened, so you can always account for every file that went into `scan`.
 
 All three commands log one line per file to **stdout** as they run (no progress bars), plus a final summary line.
@@ -80,15 +82,21 @@ Reads a `scan` CSV and re-encodes each probeable file **sequentially** (a single
 
 Each file is encoded into a `.tmp` subdirectory of `--output-dir` first, and only moved into `--output-dir` itself once ffmpeg exits successfully — so a crash or an interrupted run never leaves a partial/corrupt file sitting in the final output directory.
 
+**Output filenames are deterministic**: `sha256(absolute source path + profile id)`, truncated to 16 hex characters, e.g. `1d86e01e58d38184.mkv`. The same source file re-encoded with the same profile always produces the same filename — that's what makes resuming a previous run possible (see `--on-existing` below), and it means changing the profile (which bumps `ENCODING_PROFILE.id`, see [The fixed encoding profile](#the-fixed-encoding-profile)) naturally produces a fresh set of filenames rather than colliding with old ones.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `-i, --input <path>` | *required* | CSV produced by `scan` |
 | `-d, --output-dir <path>` | *required* | directory to write re-encoded `.mkv` files into (created if missing) |
 | `-o, --output <path>` | `./reencode-results.csv` | output CSV path |
 | `-m, --min-size-bytes <n>` | `0` (disabled) | skip files smaller than this size |
+| `--on-existing <warn\|skip>` | `warn` | what to do when a file's deterministic output name already exists in `--output-dir` |
+
+`--on-existing warn` (the default) logs a warning and overwrites the existing file — this is the safe default when you're not sure whether previous output is still good. `--on-existing skip` treats an existing output file as a completed prior run and reuses it as-is **without re-running ffmpeg** — this is how you resume an interrupted batch: re-run the same `reencode` command with `--on-existing skip` and only the files that never finished (or are new since the last run) actually get encoded. It trusts that an existing file at that deterministic path is genuinely complete and non-corrupted (e.g. from a run that finished normally last time); it does not re-validate the file's contents.
 
 ```bash
 node dist/cli.js reencode --input scan.csv --output-dir ./encoded --min-size-bytes 10485760
+node dist/cli.js reencode --input scan.csv --output-dir ./encoded --on-existing skip   # resume a previous run
 ```
 
 ### `finalize`
@@ -155,8 +163,8 @@ All `scan` columns above, plus:
 | `output_file_size_bytes` | re-encoded file size |
 | `size_optimization_pct` | `(1 - output_size / input_size) * 100`; can be negative if the encode is larger |
 | `profile_id` | `ENCODING_PROFILE.id` used for this encode |
-| `ffmpeg_command` | the exact `ffmpeg` command run for this row, quoted for copy-paste (blank for `skip_size`/`skip_scan_error` rows, where no command was run) |
-| `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) |
+| `ffmpeg_command` | the exact `ffmpeg` command run for this row, quoted for copy-paste. Blank for `skip_size`/`skip_scan_error` rows (no command was run), **and also blank for an `ok` row reused via `--on-existing skip`** — a populated `ffmpeg_command` on an `ok` row means it was freshly encoded this run; a blank one means the output file was reused as-is from a previous run |
+| `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) — note there's no separate status for "reused via `--on-existing skip`"; it's still `ok`, since the output file is genuinely complete, just not freshly produced this run (see `ffmpeg_command` above) |
 | `reencode_error` | ffmpeg error text, or the passed-through `scan_error` for `skip_scan_error` rows |
 
 ### `finalize` output (`finalize-results.csv`)
