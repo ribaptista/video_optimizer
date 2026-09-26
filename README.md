@@ -42,6 +42,8 @@ No step ever silently drops a row — a file that fails to probe, is skipped for
 
 All three commands log one line per file to **stdout** as they run (no progress bars), plus a final summary line.
 
+`reencode` additionally prints, after each file it actually re-encodes: how long that encode took, the average throughput (MB of source video processed per second, from the total elapsed time since the run started and the sum of source file sizes gone through so far — including skipped/errored rows, since those still count as "through the batch"), and an ETA to finish the rest (remaining source bytes ÷ that average rate). Reused rows (`--on-existing skip`) don't print these, since no encoding happened for them.
+
 ## The fixed encoding profile
 
 Defined once in [`src/profile.ts`](src/profile.ts) as `ENCODING_PROFILE`. Its `id` must change whenever any value below changes — the id is embedded in the `reencode`/`finalize` CSVs and in promoted filenames, so it's how the pipeline tells old encodes apart from new ones.
