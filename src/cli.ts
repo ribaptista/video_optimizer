@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { runScan } from "./commands/scan.js";
 import { runReencode } from "./commands/reencode.js";
+import { runFinalize } from "./commands/finalize.js";
 
 const program = new Command();
 
@@ -38,5 +39,33 @@ program
       minSizeBytes: Number(opts.minSizeBytes),
     });
   });
+
+program
+  .command("finalize")
+  .description(
+    "Using a reencode-results CSV and a % size-optimization threshold, delete low-gain encodes or promote the rest next to their originals",
+  )
+  .requiredOption("-i, --input <path>", "input CSV produced by the reencode command")
+  .requiredOption("-t, --threshold <percent>", "minimum %% size optimization required to keep an encode")
+  .option("--move-originals", "also move the original file into a sibling ./original_video directory", false)
+  .option("--dry-run", "print planned actions without touching the filesystem", false)
+  .option("-o, --output <path>", "output CSV path", "./finalize-results.csv")
+  .action(
+    async (opts: {
+      input: string;
+      threshold: string;
+      moveOriginals: boolean;
+      dryRun: boolean;
+      output: string;
+    }) => {
+      await runFinalize({
+        input: opts.input,
+        threshold: Number(opts.threshold),
+        moveOriginals: opts.moveOriginals,
+        dryRun: opts.dryRun,
+        output: opts.output,
+      });
+    },
+  );
 
 program.parseAsync(process.argv);
