@@ -47,8 +47,20 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
     "-y",
     "-i",
     row.file_path,
+    // Map video/audio/subtitle streams explicitly (each with "?" so a
+    // source lacking that stream type doesn't fail the whole map) rather
+    // than a blanket "-map 0". Some sources carry extra data/attachment
+    // streams (e.g. a "tmcd" timecode track written by phones/editors,
+    // or embedded thumbnail attachments) that Matroska can't hold via
+    // stream-copy and that fail the entire encode with a generic
+    // "Could not write header" error — none of that is meaningful video
+    // content anyway, so it's dropped rather than carried over.
     "-map",
-    "0",
+    "0:v?",
+    "-map",
+    "0:a?",
+    "-map",
+    "0:s?",
     "-map_metadata",
     "0",
     "-map_chapters",
