@@ -65,6 +65,7 @@ export interface ReencodeRow extends ScanRow {
   output_file_size_bytes: string;
   size_optimization_pct: string;
   profile_id: string;
+  ffmpeg_command: string;
   reencode_result: "ok" | "error" | "skip_size" | "skip_scan_error";
   reencode_error: string;
 }
@@ -75,6 +76,7 @@ export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
   "output_file_size_bytes",
   "size_optimization_pct",
   "profile_id",
+  "ffmpeg_command",
   "reencode_result",
   "reencode_error",
 ];

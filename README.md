@@ -78,6 +78,8 @@ node dist/cli.js scan ~/Videos --output scan.csv --concurrency 8
 
 Reads a `scan` CSV and re-encodes each probeable file **sequentially** (a single `libx264 -preset slow` encode already uses all available cores, so parallel ffmpeg processes would just contend for the same CPU).
 
+Each file is encoded into a `.tmp` subdirectory of `--output-dir` first, and only moved into `--output-dir` itself once ffmpeg exits successfully — so a crash or an interrupted run never leaves a partial/corrupt file sitting in the final output directory.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `-i, --input <path>` | *required* | CSV produced by `scan` |
@@ -153,6 +155,7 @@ All `scan` columns above, plus:
 | `output_file_size_bytes` | re-encoded file size |
 | `size_optimization_pct` | `(1 - output_size / input_size) * 100`; can be negative if the encode is larger |
 | `profile_id` | `ENCODING_PROFILE.id` used for this encode |
+| `ffmpeg_command` | the exact `ffmpeg` command run for this row, quoted for copy-paste (blank for `skip_size`/`skip_scan_error` rows, where no command was run) |
 | `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) |
 | `reencode_error` | ffmpeg error text, or the passed-through `scan_error` for `skip_scan_error` rows |
 

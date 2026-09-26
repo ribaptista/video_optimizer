@@ -43,7 +43,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     const encodeResult = await encodeVideo(row, options.outputDir);
     if (!encodeResult.ok) {
       console.log(`[reencode] error  ${row.file_path}: ${encodeResult.errorSummary}`);
-      results.push(passthroughRow(row, "error", encodeResult.errorSummary));
+      results.push(passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command));
       errorCount++;
       continue;
     }
@@ -59,6 +59,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       output_file_size_bytes: String(outStat.size),
       size_optimization_pct: optimizationPct.toFixed(2),
       profile_id: ENCODING_PROFILE.id,
+      ffmpeg_command: encodeResult.command,
       reencode_result: "ok",
       reencode_error: "",
     });
@@ -75,6 +76,7 @@ function passthroughRow(
   row: ScanRow,
   result: ReencodeRow["reencode_result"],
   error: string,
+  command = "",
 ): ReencodeRow {
   return {
     ...row,
@@ -82,6 +84,7 @@ function passthroughRow(
     output_file_size_bytes: "",
     size_optimization_pct: "",
     profile_id: "",
+    ffmpeg_command: command,
     reencode_result: result,
     reencode_error: error,
   };

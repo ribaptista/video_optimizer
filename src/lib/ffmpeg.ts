@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
+import { moveFile } from "./moveFile.js";
 import { ENCODING_PROFILE } from "../profile.js";
 import type { ScanRow } from "../types.js";
 
@@ -9,6 +10,19 @@ export interface EncodeResult {
   outputPath: string;
   ok: boolean;
   errorSummary: string;
+  command: string;
+}
+
+// Quotes an argument for display/copy-paste as a bash command line. Not
+// used to actually execute anything (ffmpeg is always spawned with an argv
+// array, never a shell string), only to populate the CSV's audit column.
+function quoteShellArg(arg: string): string {
+  if (/^[A-Za-z0-9@%_+=:,./-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+function formatCommand(bin: string, args: string[]): string {
+  return [bin, ...args].map(quoteShellArg).join(" ");
 }
 
 // ffmpeg's stderr mixes real log lines (newline-terminated) with a
@@ -37,12 +51,18 @@ function summarizeFfmpegStderr(rawStderr: string): string {
   return relevant.join(" | ").slice(-2000);
 }
 
-export function buildOutputPath(outputDir: string): string {
-  return path.join(outputDir, `${randomUUID()}.${ENCODING_PROFILE.container}`);
-}
-
 export async function encodeVideo(row: ScanRow, outputDir: string): Promise<EncodeResult> {
-  const outputPath = buildOutputPath(outputDir);
+  // Encode into a temp subdirectory of outputDir first, and only move the
+  // result into outputDir itself once ffmpeg has actually finished
+  // successfully — so a crash or an interrupted run never leaves a
+  // partial/corrupt file sitting in the final output directory.
+  const tempDir = path.join(outputDir, ".tmp");
+  await mkdir(tempDir, { recursive: true });
+
+  const fileName = `${randomUUID()}.${ENCODING_PROFILE.container}`;
+  const tempOutputPath = path.join(tempDir, fileName);
+  const finalOutputPath = path.join(outputDir, fileName);
+
   const args = [
     "-y",
     "-i",
@@ -87,7 +107,13 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
     args.push("-c:a", "copy");
   }
   args.push("-c:s", "copy");
-  args.push(outputPath);
+
+  // Record the command as it would look writing straight to the final
+  // path — the temp-dir staging is an internal implementation detail that
+  // shouldn't leak into the audit trail a user might copy-paste to
+  // reproduce this encode.
+  const command = formatCommand("ffmpeg", [...args, finalOutputPath]);
+  args.push(tempOutputPath);
 
   const stderrChunks: Buffer[] = [];
   const ok = await new Promise<boolean>((resolve) => {
@@ -100,8 +126,10 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
   const rawStderr = Buffer.concat(stderrChunks).toString("utf8");
 
   if (!ok) {
-    await unlink(outputPath).catch(() => {});
+    await unlink(tempOutputPath).catch(() => {});
+    return { outputPath: finalOutputPath, ok, errorSummary: summarizeFfmpegStderr(rawStderr), command };
   }
 
-  return { outputPath, ok, errorSummary: ok ? "" : summarizeFfmpegStderr(rawStderr) };
+  await moveFile(tempOutputPath, finalOutputPath);
+  return { outputPath: finalOutputPath, ok, errorSummary: "", command };
 }
