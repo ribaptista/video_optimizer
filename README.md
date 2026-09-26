@@ -110,6 +110,7 @@ Reads a `reencode` CSV and, per row, either deletes the encode (below threshold)
 | `--move-originals` | `false` | also move the original file into a sibling `./original_video/` directory |
 | `--dry-run` | `false` | print planned actions without touching the filesystem |
 | `-o, --output <path>` | `./finalize-results.csv` | output CSV path |
+| `--on-existing <ask\|overwrite\|skip>` | `ask` | what to do when a promote/archive destination file already exists |
 
 ```bash
 node dist/cli.js finalize --input reencode-results.csv --threshold 20 --move-originals --dry-run
@@ -121,6 +122,16 @@ A promoted file is renamed to `<original-basename>.reencoded-<profile-id>-opt<N>
 ```
 movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v2-opt42pct.mkv
 ```
+
+**`finalize` is resumable and re-runnable, like `reencode`.** Because the promoted filename and the archived-original path are both fully deterministic (derived from the source path, profile id, and achieved %), re-running `finalize` over the same (or an updated) CSV is safe:
+
+- **Already done, nothing to conflict with** — if the file `finalize` would move (the re-encoded output for a promote, or the original for an archive) no longer exists, but the expected destination already exists, it's treated as already completed by a previous run: a warning is printed (even during `--dry-run`), the row is still recorded with its normal `finalize_action` (`deleted`/`promoted`), and `conflict_resolution` notes `promote:already_done`, `archive:already_done`, or `delete:already_done`.
+- **Genuine conflict** — if the file to move *and* something already at the destination *both* exist, `finalize` needs a decision:
+  - `--on-existing ask` (the default) prompts interactively, once per conflicting file (`y` overwrites, anything else skips). If stdin isn't an interactive terminal, it logs a warning and defaults to skip rather than hanging. **`--dry-run` never prompts** — it logs what *would* be asked and treats it as skipped for the preview.
+  - `--on-existing overwrite` replaces the destination without asking.
+  - `--on-existing skip` leaves both files exactly where they are without asking.
+
+A row left unresolved by a skip (declined, `--on-existing skip`, or a dry-run "would ask") gets `finalize_action = skip_conflict` — the encoded file (and/or the original) is left in place for you to sort out manually or re-run with a decision.
 
 ## CSV schemas
 
@@ -163,8 +174,9 @@ All `scan` columns above, plus:
 | `output_file_size_bytes` | re-encoded file size |
 | `size_optimization_pct` | `(1 - output_size / input_size) * 100`; can be negative if the encode is larger |
 | `profile_id` | `ENCODING_PROFILE.id` used for this encode |
-| `ffmpeg_command` | the exact `ffmpeg` command run for this row, quoted for copy-paste. Blank for `skip_size`/`skip_scan_error` rows (no command was run), **and also blank for an `ok` row reused via `--on-existing skip`** — a populated `ffmpeg_command` on an `ok` row means it was freshly encoded this run; a blank one means the output file was reused as-is from a previous run |
-| `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) — note there's no separate status for "reused via `--on-existing skip`"; it's still `ok`, since the output file is genuinely complete, just not freshly produced this run (see `ffmpeg_command` above) |
+| `ffmpeg_command` | the `ffmpeg` command for this row, quoted for copy-paste — populated for both a fresh encode and a reused one (see `reencode_action`); blank only for `skip_size`/`skip_scan_error` rows, where no encode was ever attempted |
+| `reencode_action` | `reencode` (ffmpeg actually ran this time), `reuse` (output already existed and `--on-existing skip` reused it without running ffmpeg), or blank for `skip_size`/`skip_scan_error` rows |
+| `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) — a `reuse` row is still `ok`, since the output file is genuinely complete, just not freshly produced this run |
 | `reencode_error` | ffmpeg error text, or the passed-through `scan_error` for `skip_scan_error` rows |
 
 ### `finalize` output (`finalize-results.csv`)
@@ -173,12 +185,15 @@ All `reencode` columns above, plus:
 
 | Column | Meaning |
 |---|---|
-| `finalize_action` | `deleted`, `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), or `error` |
+| `finalize_action` | `deleted`, `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_conflict` (a destination conflict was left unresolved — see below), or `error` |
+| `conflict_resolution` | blank on the ordinary happy path; otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `delete`, `promote`, `archive`. Codes: `already_done`, `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, secondary to a successful promote) |
 | `finalize_error` | error text if `finalize_action = error` |
-| `original_archived` | `true`/`false` — whether `--move-originals` archived the source file for this row |
+| `original_archived` | `true`/`false` — whether the source file ended up archived (freshly, or already archived from a previous run) for this row |
 
 ## Known limitations
 
 - The PCM-vs-copy audio decision and the color-tag passthrough are both based on the **first** audio/video stream only; files with multiple audio streams of mixed codec types are encoded uniformly based on the first one.
 - `reencode` maps only video, audio, and subtitle streams (`-map 0:v? -map 0:a? -map 0:s?`) — data/attachment streams some sources embed (e.g. a `tmcd` timecode track written by phones or editing tools) are intentionally dropped, since Matroska can't hold most of them via stream-copy and they carry no playable content anyway.
 - Re-encoding into `.mkv` while stream-copying a subtitle codec that Matroska can't hold (e.g. MP4 `mov_text`) will still fail that file with `reencode_result = error` — inspect `reencode_error` and handle such files separately if you hit this.
+- `finalize --on-existing ask` prompts one file at a time, in row order, with no "apply to all" shortcut — for a large batch with many conflicts, pass `--on-existing overwrite` or `--on-existing skip` to resolve them all the same way non-interactively instead.
+- Neither `--on-existing skip` (in `reencode`) nor `finalize`'s "already done" detection re-validates the existing file's actual contents — they trust that a file sitting at the expected deterministic path is genuinely complete and uncorrupted, e.g. from a run that finished normally.

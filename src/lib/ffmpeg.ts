@@ -65,18 +65,12 @@ export function getOutputPath(row: ScanRow, outputDir: string): string {
   return path.join(outputDir, getOutputFileName(row));
 }
 
-export async function encodeVideo(row: ScanRow, outputDir: string): Promise<EncodeResult> {
-  // Encode into a temp subdirectory of outputDir first, and only move the
-  // result into outputDir itself once ffmpeg has actually finished
-  // successfully — so a crash or an interrupted run never leaves a
-  // partial/corrupt file sitting in the final output directory.
-  const tempDir = path.join(outputDir, ".tmp");
-  await mkdir(tempDir, { recursive: true });
-
-  const fileName = getOutputFileName(row);
-  const tempOutputPath = path.join(tempDir, fileName);
-  const finalOutputPath = path.join(outputDir, fileName);
-
+// Builds the ffmpeg argv for encoding `row` to `outputPath`, without the
+// leading "-y" input/output framing being tied to any particular temp vs.
+// final path. Shared by encodeVideo (execution) and buildFfmpegCommand
+// (audit-trail display for rows that reuse an existing output instead of
+// re-running ffmpeg).
+function buildEncodeArgs(row: ScanRow, outputPath: string): string[] {
   const args = [
     "-y",
     "-i",
@@ -120,14 +114,35 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
   } else {
     args.push("-c:a", "copy");
   }
-  args.push("-c:s", "copy");
+  args.push("-c:s", "copy", outputPath);
+  return args;
+}
+
+// The command as it would look writing straight to the final path in
+// outputDir — used both for the audit-trail column on a fresh encode and,
+// unexecuted, for a row that reuses a previous run's output.
+export function buildFfmpegCommand(row: ScanRow, outputDir: string): string {
+  return formatCommand("ffmpeg", buildEncodeArgs(row, getOutputPath(row, outputDir)));
+}
+
+export async function encodeVideo(row: ScanRow, outputDir: string): Promise<EncodeResult> {
+  // Encode into a temp subdirectory of outputDir first, and only move the
+  // result into outputDir itself once ffmpeg has actually finished
+  // successfully — so a crash or an interrupted run never leaves a
+  // partial/corrupt file sitting in the final output directory.
+  const tempDir = path.join(outputDir, ".tmp");
+  await mkdir(tempDir, { recursive: true });
+
+  const fileName = getOutputFileName(row);
+  const tempOutputPath = path.join(tempDir, fileName);
+  const finalOutputPath = path.join(outputDir, fileName);
 
   // Record the command as it would look writing straight to the final
   // path — the temp-dir staging is an internal implementation detail that
   // shouldn't leak into the audit trail a user might copy-paste to
   // reproduce this encode.
-  const command = formatCommand("ffmpeg", [...args, finalOutputPath]);
-  args.push(tempOutputPath);
+  const command = formatCommand("ffmpeg", buildEncodeArgs(row, finalOutputPath));
+  const args = buildEncodeArgs(row, tempOutputPath);
 
   const stderrChunks: Buffer[] = [];
   const ok = await new Promise<boolean>((resolve) => {

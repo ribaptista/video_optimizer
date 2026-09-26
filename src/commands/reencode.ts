@@ -1,6 +1,6 @@
 import { mkdir, stat } from "node:fs/promises";
 import { readCsv, writeCsv } from "../lib/csv.js";
-import { encodeVideo, getOutputPath } from "../lib/ffmpeg.js";
+import { buildFfmpegCommand, encodeVideo, getOutputPath } from "../lib/ffmpeg.js";
 import { ENCODING_PROFILE } from "../profile.js";
 import { REENCODE_COLUMNS, type ScanRow, type ReencodeRow } from "../types.js";
 
@@ -65,7 +65,8 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
           output_file_size_bytes: String(existingStat.size),
           size_optimization_pct: optimizationPct.toFixed(2),
           profile_id: ENCODING_PROFILE.id,
-          ffmpeg_command: "",
+          ffmpeg_command: buildFfmpegCommand(row, options.outputDir),
+          reencode_action: "reuse",
           reencode_result: "ok",
           reencode_error: "",
         });
@@ -79,7 +80,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     const encodeResult = await encodeVideo(row, options.outputDir);
     if (!encodeResult.ok) {
       console.log(`[reencode] error  ${row.file_path}: ${encodeResult.errorSummary}`);
-      results.push(passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command));
+      results.push(passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command, "reencode"));
       errorCount++;
       continue;
     }
@@ -96,6 +97,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       size_optimization_pct: optimizationPct.toFixed(2),
       profile_id: ENCODING_PROFILE.id,
       ffmpeg_command: encodeResult.command,
+      reencode_action: "reencode",
       reencode_result: "ok",
       reencode_error: "",
     });
@@ -113,6 +115,7 @@ function passthroughRow(
   result: ReencodeRow["reencode_result"],
   error: string,
   command = "",
+  action: ReencodeRow["reencode_action"] = "",
 ): ReencodeRow {
   return {
     ...row,
@@ -121,6 +124,7 @@ function passthroughRow(
     size_optimization_pct: "",
     profile_id: "",
     ffmpeg_command: command,
+    reencode_action: action,
     reencode_result: result,
     reencode_error: error,
   };

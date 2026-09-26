@@ -1,8 +1,11 @@
 import path from "node:path";
-import { mkdir, unlink } from "node:fs/promises";
+import { mkdir, unlink, stat } from "node:fs/promises";
+import { createInterface } from "node:readline/promises";
 import { readCsv, writeCsv } from "../lib/csv.js";
 import { moveFile } from "../lib/moveFile.js";
 import { FINALIZE_COLUMNS, type ReencodeRow, type FinalizeRow } from "../types.js";
+
+export type OnExistingFinalize = "ask" | "overwrite" | "skip";
 
 export interface FinalizeOptions {
   input: string;
@@ -10,6 +13,95 @@ export interface FinalizeOptions {
   moveOriginals: boolean;
   dryRun: boolean;
   output: string;
+  onExisting: OnExistingFinalize;
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function promptYesNo(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    console.log(
+      `[finalize] warning  no interactive terminal available to answer "${question}" — defaulting to skip. Pass --on-existing overwrite|skip to decide this non-interactively.`,
+    );
+    return false;
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`[finalize] ${question} [y/N] `);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
+type ConflictKind = "proceed" | "skip" | "already_done";
+
+// `code` is the short, structured token recorded in the CSV's
+// conflict_resolution column; `message` is the fuller sentence printed to
+// the console (undefined when there was no conflict at all, i.e. the
+// ordinary happy path with no pre-existing destination).
+interface ConflictOutcome {
+  kind: ConflictKind;
+  code: "none" | "already_done" | "overwritten_flag" | "overwritten_confirmed" | "skipped_flag" | "skipped_declined" | "skipped_dry_run";
+  message?: string;
+}
+
+// Shared decision for both the promote-destination move and the
+// archive-original move: what to do given whether the thing we'd move
+// still exists, and whether something is already sitting at the
+// destination.
+async function resolveConflict(opts: {
+  sourceExists: boolean;
+  destExists: boolean;
+  onExisting: OnExistingFinalize;
+  dryRun: boolean;
+  sourceLabel: string;
+  destLabel: string;
+}): Promise<ConflictOutcome> {
+  if (!opts.destExists) {
+    return { kind: "proceed", code: "none" };
+  }
+  if (!opts.sourceExists) {
+    return {
+      kind: "already_done",
+      code: "already_done",
+      message: `${opts.sourceLabel} no longer exists, but ${opts.destLabel} already exists — treating as already done from a previous run`,
+    };
+  }
+
+  // Both exist: a genuine conflict that needs a decision.
+  if (opts.onExisting === "overwrite") {
+    return {
+      kind: "proceed",
+      code: "overwritten_flag",
+      message: `${opts.destLabel} already existed — overwriting it (--on-existing overwrite)`,
+    };
+  }
+  if (opts.onExisting === "skip") {
+    return {
+      kind: "skip",
+      code: "skipped_flag",
+      message: `${opts.destLabel} already existed — skipping (--on-existing skip)`,
+    };
+  }
+  if (opts.dryRun) {
+    return {
+      kind: "skip",
+      code: "skipped_dry_run",
+      message: `${opts.destLabel} already exists — would prompt to overwrite it with ${opts.sourceLabel} (dry run; pass --on-existing overwrite|skip to decide non-interactively)`,
+    };
+  }
+  const overwrite = await promptYesNo(`${opts.destLabel} already exists. Overwrite it with ${opts.sourceLabel}?`);
+  return overwrite
+    ? { kind: "proceed", code: "overwritten_confirmed", message: `${opts.destLabel} already existed — overwritten (confirmed interactively)` }
+    : { kind: "skip", code: "skipped_declined", message: `${opts.destLabel} already existed — skipped (declined interactively)` };
 }
 
 export async function runFinalize(options: FinalizeOptions): Promise<void> {
@@ -21,6 +113,7 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
   const results: FinalizeRow[] = [];
   let deleted = 0;
   let promoted = 0;
+  let skipConflict = 0;
   let skipped = 0;
   let errored = 0;
 
@@ -30,6 +123,7 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
       results.push({
         ...row,
         finalize_action: "skip_not_encoded",
+        conflict_resolution: "",
         finalize_error: "",
         original_archived: "false",
       });
@@ -41,6 +135,21 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
 
     try {
       if (optimizationPct < options.threshold) {
+        if (!(await pathExists(row.output_file_path))) {
+          console.log(
+            `[finalize] warning  ${row.output_file_path} no longer exists — treating as already deleted from a previous run`,
+          );
+          results.push({
+            ...row,
+            finalize_action: "deleted",
+            conflict_resolution: "delete:already_done",
+            finalize_error: "",
+            original_archived: "false",
+          });
+          deleted++;
+          continue;
+        }
+
         if (options.dryRun) {
           console.log(
             `[finalize] dry-run would delete  ${row.output_file_path} (${optimizationPct.toFixed(1)}% < ${options.threshold}%)`,
@@ -51,11 +160,12 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
             `[finalize] deleted  ${row.output_file_path} (${optimizationPct.toFixed(1)}% < ${options.threshold}%)`,
           );
         }
-        results.push({ ...row, finalize_action: "deleted", finalize_error: "", original_archived: "false" });
+        results.push({ ...row, finalize_action: "deleted", conflict_resolution: "", finalize_error: "", original_archived: "false" });
         deleted++;
         continue;
       }
 
+      // Promote branch.
       const originalDir = path.dirname(row.file_path);
       const baseNameNoExt = path.basename(row.file_path, path.extname(row.file_path));
       const encodedExt = path.extname(row.output_file_path);
@@ -65,45 +175,98 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
         `${baseNameNoExt}.reencoded-${row.profile_id}-opt${roundedPct}pct${encodedExt}`,
       );
 
-      let archived = false;
-      if (options.dryRun) {
-        console.log(`[finalize] dry-run would promote  ${row.output_file_path} -> ${destPath}`);
-        if (options.moveOriginals) {
-          const archiveDest = path.join(originalDir, "original_video", path.basename(row.file_path));
-          console.log(`[finalize] dry-run would archive original  ${row.file_path} -> ${archiveDest}`);
-          archived = true;
+      const conflictCodes: string[] = [];
+
+      const sourceExists = await pathExists(row.output_file_path);
+      const destExists = await pathExists(destPath);
+      const conflict = await resolveConflict({
+        sourceExists,
+        destExists,
+        onExisting: options.onExisting,
+        dryRun: options.dryRun,
+        sourceLabel: row.output_file_path,
+        destLabel: destPath,
+      });
+      if (conflict.message) console.log(`[finalize] warning  ${conflict.message}`);
+      if (conflict.code !== "none") conflictCodes.push(`promote:${conflict.code}`);
+
+      let promotedThisRow = false;
+      if (conflict.kind === "already_done") {
+        promotedThisRow = true;
+      } else if (conflict.kind === "proceed") {
+        if (options.dryRun) {
+          console.log(`[finalize] dry-run would promote  ${row.output_file_path} -> ${destPath}`);
+        } else {
+          await moveFile(row.output_file_path, destPath);
+          console.log(`[finalize] promoted  ${row.output_file_path} -> ${destPath}`);
         }
-      } else {
-        await moveFile(row.output_file_path, destPath);
-        console.log(`[finalize] promoted  ${row.output_file_path} -> ${destPath}`);
-        if (options.moveOriginals) {
+        promotedThisRow = true;
+      }
+      // conflict.kind === "skip": leave both files where they are.
+
+      let archived = false;
+      if (options.moveOriginals && promotedThisRow) {
+        try {
           const archiveDir = path.join(originalDir, "original_video");
-          await mkdir(archiveDir, { recursive: true });
           const archiveDest = path.join(archiveDir, path.basename(row.file_path));
-          await moveFile(row.file_path, archiveDest);
-          console.log(`[finalize] archived original  ${row.file_path} -> ${archiveDest}`);
-          archived = true;
+          const origSourceExists = await pathExists(row.file_path);
+          const origDestExists = await pathExists(archiveDest);
+          const origConflict = await resolveConflict({
+            sourceExists: origSourceExists,
+            destExists: origDestExists,
+            onExisting: options.onExisting,
+            dryRun: options.dryRun,
+            sourceLabel: row.file_path,
+            destLabel: archiveDest,
+          });
+          if (origConflict.message) console.log(`[finalize] warning  ${origConflict.message}`);
+          if (origConflict.code !== "none") conflictCodes.push(`archive:${origConflict.code}`);
+
+          if (origConflict.kind === "already_done") {
+            archived = true;
+          } else if (origConflict.kind === "proceed") {
+            if (options.dryRun) {
+              console.log(`[finalize] dry-run would archive original  ${row.file_path} -> ${archiveDest}`);
+            } else {
+              await mkdir(archiveDir, { recursive: true });
+              await moveFile(row.file_path, archiveDest);
+              console.log(`[finalize] archived original  ${row.file_path} -> ${archiveDest}`);
+            }
+            archived = true;
+          }
+          // origConflict.kind === "skip": leave the original where it is.
+        } catch (err) {
+          // A failure archiving the original is secondary to the promote
+          // above having already succeeded — note it in conflict_resolution
+          // rather than demoting the whole row to "error".
+          const message = err instanceof Error ? err.message : String(err);
+          console.log(`[finalize] warning  failed to archive original ${row.file_path}: ${message}`);
+          conflictCodes.push("archive:failed");
+          archived = false;
         }
       }
 
+      const rowAction: FinalizeRow["finalize_action"] = promotedThisRow ? "promoted" : "skip_conflict";
       results.push({
         ...row,
-        finalize_action: "promoted",
+        finalize_action: rowAction,
+        conflict_resolution: conflictCodes.join(" | "),
         finalize_error: "",
         original_archived: archived ? "true" : "false",
       });
-      promoted++;
+      if (rowAction === "promoted") promoted++;
+      else skipConflict++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.log(`[finalize] error  ${row.file_path}: ${message}`);
-      results.push({ ...row, finalize_action: "error", finalize_error: message, original_archived: "false" });
+      results.push({ ...row, finalize_action: "error", conflict_resolution: "", finalize_error: message, original_archived: "false" });
       errored++;
     }
   }
 
   await writeCsv(options.output, FINALIZE_COLUMNS, results);
   console.log(
-    `[finalize] done: ${deleted} deleted, ${promoted} promoted, ${skipped} skip_not_encoded, ${errored} error, wrote ${options.output}${
+    `[finalize] done: ${deleted} deleted, ${promoted} promoted, ${skipConflict} skip_conflict, ${skipped} skip_not_encoded, ${errored} error, wrote ${options.output}${
       options.dryRun ? " (dry run — no files were changed)" : ""
     }`,
   );

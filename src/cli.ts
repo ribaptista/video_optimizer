@@ -2,7 +2,7 @@
 import { Command, Option } from "commander";
 import { runScan } from "./commands/scan.js";
 import { runReencode, type OnExisting } from "./commands/reencode.js";
-import { runFinalize } from "./commands/finalize.js";
+import { runFinalize, type OnExistingFinalize } from "./commands/finalize.js";
 
 const program = new Command();
 
@@ -62,6 +62,15 @@ program
   .option("--move-originals", "also move the original file into a sibling ./original_video directory", false)
   .option("--dry-run", "print planned actions without touching the filesystem", false)
   .option("-o, --output <path>", "output CSV path", "./finalize-results.csv")
+  .addOption(
+    new Option(
+      "--on-existing <mode>",
+      "what to do when a promoted/archived destination file already exists: " +
+        "'ask' prompts interactively (default); 'overwrite' replaces it; 'skip' leaves both files as they are",
+    )
+      .choices(["ask", "overwrite", "skip"])
+      .default("ask"),
+  )
   .action(
     async (opts: {
       input: string;
@@ -69,6 +78,7 @@ program
       moveOriginals: boolean;
       dryRun: boolean;
       output: string;
+      onExisting: OnExistingFinalize;
     }) => {
       await runFinalize({
         input: opts.input,
@@ -76,6 +86,7 @@ program
         moveOriginals: opts.moveOriginals,
         dryRun: opts.dryRun,
         output: opts.output,
+        onExisting: opts.onExisting,
       });
     },
   );

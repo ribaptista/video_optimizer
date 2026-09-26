@@ -66,6 +66,7 @@ export interface ReencodeRow extends ScanRow {
   size_optimization_pct: string;
   profile_id: string;
   ffmpeg_command: string;
+  reencode_action: "reencode" | "reuse" | "";
   reencode_result: "ok" | "error" | "skip_size" | "skip_scan_error";
   reencode_error: string;
 }
@@ -77,12 +78,14 @@ export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
   "size_optimization_pct",
   "profile_id",
   "ffmpeg_command",
+  "reencode_action",
   "reencode_result",
   "reencode_error",
 ];
 
 export interface FinalizeRow extends ReencodeRow {
-  finalize_action: "deleted" | "promoted" | "skip_not_encoded" | "error";
+  finalize_action: "deleted" | "promoted" | "skip_not_encoded" | "skip_conflict" | "error";
+  conflict_resolution: string;
   finalize_error: string;
   original_archived: "true" | "false";
 }
@@ -90,6 +93,7 @@ export interface FinalizeRow extends ReencodeRow {
 export const FINALIZE_COLUMNS: (keyof FinalizeRow)[] = [
   ...REENCODE_COLUMNS,
   "finalize_action",
+  "conflict_resolution",
   "finalize_error",
   "original_archived",
 ];
