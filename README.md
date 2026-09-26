@@ -130,8 +130,9 @@ movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v2-opt42pct.mkv
   - `--on-existing ask` (the default) prompts interactively, once per conflicting file (`y` overwrites, anything else skips). If stdin isn't an interactive terminal, it logs a warning and defaults to skip rather than hanging. **`--dry-run` never prompts** — it logs what *would* be asked and treats it as skipped for the preview.
   - `--on-existing overwrite` replaces the destination without asking.
   - `--on-existing skip` leaves both files exactly where they are without asking.
+- **Neither exists** — if the file `finalize` would move is gone *and* nothing is at the destination either (e.g. the source was deleted or moved by something outside this tool), there's genuinely nothing to do: it's not treated as an error, just noted as `promote:missing_both` / `archive:missing_both` in `conflict_resolution`. For a promote this sets `finalize_action = skip_conflict`; for an archive it doesn't affect `finalize_action`, since the promote it's attached to already succeeded.
 
-A row left unresolved by a skip (declined, `--on-existing skip`, or a dry-run "would ask") gets `finalize_action = skip_conflict` — the encoded file (and/or the original) is left in place for you to sort out manually or re-run with a decision.
+A row left unresolved (a genuine conflict declined or `--on-existing skip`, a dry-run "would ask", or the "neither exists" case above) gets `finalize_action = skip_conflict` — the encoded file (and/or the original), if either still exists, is left in place for you to sort out manually or re-run with a decision.
 
 ## CSV schemas
 
@@ -186,7 +187,7 @@ All `reencode` columns above, plus:
 | Column | Meaning |
 |---|---|
 | `finalize_action` | `deleted`, `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_conflict` (a destination conflict was left unresolved — see below), or `error` |
-| `conflict_resolution` | blank on the ordinary happy path; otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `delete`, `promote`, `archive`. Codes: `already_done`, `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, secondary to a successful promote) |
+| `conflict_resolution` | blank on the ordinary happy path; otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `delete`, `promote`, `archive`. Codes: `already_done`, `missing_both` (neither the file to move nor the destination exists — nothing to do, not an error), `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, an unexpected error secondary to a successful promote) |
 | `finalize_error` | error text if `finalize_action = error` |
 | `original_archived` | `true`/`false` — whether the source file ended up archived (freshly, or already archived from a previous run) for this row |
 

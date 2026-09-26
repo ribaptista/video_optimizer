@@ -49,7 +49,15 @@ type ConflictKind = "proceed" | "skip" | "already_done";
 // ordinary happy path with no pre-existing destination).
 interface ConflictOutcome {
   kind: ConflictKind;
-  code: "none" | "already_done" | "overwritten_flag" | "overwritten_confirmed" | "skipped_flag" | "skipped_declined" | "skipped_dry_run";
+  code:
+    | "none"
+    | "already_done"
+    | "missing_both"
+    | "overwritten_flag"
+    | "overwritten_confirmed"
+    | "skipped_flag"
+    | "skipped_declined"
+    | "skipped_dry_run";
   message?: string;
 }
 
@@ -66,6 +74,13 @@ async function resolveConflict(opts: {
   destLabel: string;
 }): Promise<ConflictOutcome> {
   if (!opts.destExists) {
+    if (!opts.sourceExists) {
+      return {
+        kind: "skip",
+        code: "missing_both",
+        message: `neither ${opts.sourceLabel} nor ${opts.destLabel} exists — nothing to do here (the source may have been deleted, moved elsewhere, or never produced)`,
+      };
+    }
     return { kind: "proceed", code: "none" };
   }
   if (!opts.sourceExists) {
