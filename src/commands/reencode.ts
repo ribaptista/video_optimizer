@@ -42,9 +42,8 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     console.log(`[reencode] start  ${row.file_path}`);
     const encodeResult = await encodeVideo(row, options.outputDir);
     if (!encodeResult.ok) {
-      const message = encodeResult.stderr.replace(/\s+/g, " ").trim().slice(-500);
-      console.log(`[reencode] error  ${row.file_path}: ${message}`);
-      results.push(passthroughRow(row, "error", message));
+      console.log(`[reencode] error  ${row.file_path}: ${encodeResult.errorSummary}`);
+      results.push(passthroughRow(row, "error", encodeResult.errorSummary));
       errorCount++;
       continue;
     }

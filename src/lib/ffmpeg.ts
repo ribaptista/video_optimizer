@@ -8,7 +8,33 @@ import type { ScanRow } from "../types.js";
 export interface EncodeResult {
   outputPath: string;
   ok: boolean;
-  stderr: string;
+  errorSummary: string;
+}
+
+// ffmpeg's stderr mixes real log lines (newline-terminated) with a
+// continuously-redrawn "frame=... fps=... speed=..." progress line that
+// uses bare '\r' with no trailing '\n'. Naively concatenating raw chunks
+// and collapsing all whitespace (as an earlier version of this file did)
+// runs unrelated numbers together and can push the actual error out of a
+// fixed-length tail slice. This instead: normalizes each '\r'-delimited
+// redraw down to its final state, then prefers lines that actually look
+// like an error over routine encoder stats, so the CSV's error column is
+// meaningful instead of an arbitrary truncated fragment.
+function summarizeFfmpegStderr(rawStderr: string): string {
+  const normalizedLines = rawStderr
+    .split("\n")
+    .map((line) => {
+      const segments = line.split("\r");
+      return segments[segments.length - 1].trim();
+    })
+    .filter((line) => line.length > 0);
+
+  const errorLines = normalizedLines.filter((line) =>
+    /error|invalid|failed|not supported|no such|unable to|could not/i.test(line),
+  );
+  const relevant = errorLines.length > 0 ? errorLines : normalizedLines.slice(-10);
+
+  return relevant.join(" | ").slice(-2000);
 }
 
 export function buildOutputPath(outputDir: string): string {
@@ -59,11 +85,11 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
     child.on("close", (code) => resolve(code === 0));
   });
 
-  const stderr = Buffer.concat(stderrChunks).toString("utf8");
+  const rawStderr = Buffer.concat(stderrChunks).toString("utf8");
 
   if (!ok) {
     await unlink(outputPath).catch(() => {});
   }
 
-  return { outputPath, ok, stderr };
+  return { outputPath, ok, errorSummary: ok ? "" : summarizeFfmpegStderr(rawStderr) };
 }
