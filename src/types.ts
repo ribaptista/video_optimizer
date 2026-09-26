@@ -72,6 +72,9 @@ export interface ReencodeRow extends ScanRow {
   reencode_result: "ok" | "error" | "skip_size" | "skip_scan_error";
   reencode_error: string;
   sample_seconds: string;
+  extrapolated_reencoded_size_bytes: string;
+  extrapolated_size_optimization_pct: string;
+  extrapolated_size_optimization_bytes: string;
 }
 
 export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
@@ -85,6 +88,9 @@ export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
   "reencode_result",
   "reencode_error",
   "sample_seconds",
+  "extrapolated_reencoded_size_bytes",
+  "extrapolated_size_optimization_pct",
+  "extrapolated_size_optimization_bytes",
 ];
 
 export interface FinalizeRow extends ReencodeRow {

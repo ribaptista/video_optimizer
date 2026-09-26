@@ -47,6 +47,27 @@ function rowProgressBytes(row: ScanRow, sampleSeconds: number | undefined): numb
   return estimateSampleBytes(row, sampleSeconds);
 }
 
+interface Extrapolation {
+  sizeBytes: number;
+  pct: number;
+  savingsBytes: number;
+}
+
+// Projects the sample's observed compression ratio onto the whole file:
+// ratio = actual sample output size / estimated sample input size, then
+// extrapolatedSize = full file size * ratio. Under the assumption that
+// the sampled slice is representative of the whole file's compressibility,
+// this gives a concrete "the whole file would end up around N bytes,
+// saving M bytes" estimate — pct comes out equal to size_optimization_pct
+// (same ratio, just scaled), included for convenience so it doesn't have
+// to be recomputed from the absolute figures.
+function extrapolateFullFile(fullSizeBytes: number, outputSizeBytes: number, sampleInputEstimateBytes: number): Extrapolation | null {
+  if (sampleInputEstimateBytes <= 0) return null;
+  const ratio = outputSizeBytes / sampleInputEstimateBytes;
+  const sizeBytes = fullSizeBytes * ratio;
+  return { sizeBytes, pct: (1 - ratio) * 100, savingsBytes: fullSizeBytes - sizeBytes };
+}
+
 // A source shorter than the requested --sample duration gets fully
 // encoded anyway (the -ss/-t offset math clamps to the real duration),
 // so treat that row as a genuine full encode rather than a sample: use
@@ -136,6 +157,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     if (existingStat) {
       if (options.onExisting === "skip") {
         const optimizationPct = (1 - existingStat.size / progressBytes) * 100;
+        const extrapolation = rowSample !== undefined ? extrapolateFullFile(fullSizeBytes, existingStat.size, progressBytes) : null;
         console.log(
           `[reencode] skip_exists  ${row.file_path} (reusing ${existingPath} from a previous run)`,
         );
@@ -150,6 +172,9 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
           reencode_result: "ok",
           reencode_error: "",
           sample_seconds: rowSample !== undefined ? String(rowSample) : "",
+          extrapolated_reencoded_size_bytes: extrapolation ? extrapolation.sizeBytes.toFixed(0) : "",
+          extrapolated_size_optimization_pct: extrapolation ? extrapolation.pct.toFixed(2) : "",
+          extrapolated_size_optimization_bytes: extrapolation ? extrapolation.savingsBytes.toFixed(0) : "",
         });
         skipExistsCount++;
         processedBytes += progressBytes;
@@ -174,10 +199,16 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     const rowDurationSeconds = (Date.now() - rowStart) / 1000;
     const outStat = await stat(encodeResult.outputPath);
     const optimizationPct = (1 - outStat.size / progressBytes) * 100;
+    const extrapolation = rowSample !== undefined ? extrapolateFullFile(fullSizeBytes, outStat.size, progressBytes) : null;
     console.log(
       `[reencode] ok  ${row.file_path} -> ${encodeResult.outputPath} (${optimizationPct.toFixed(1)}% smaller)`,
     );
     console.log(`[reencode]   took ${formatDuration(rowDurationSeconds)}`);
+    if (extrapolation) {
+      console.log(
+        `[reencode]   extrapolated full-file: ~${bytesToMB(extrapolation.sizeBytes).toFixed(1)} MB (${extrapolation.pct.toFixed(1)}% smaller, ~${bytesToMB(extrapolation.savingsBytes).toFixed(1)} MB saved)`,
+      );
+    }
 
     processedBytes += progressBytes;
     const elapsedSeconds = (Date.now() - runStart) / 1000;
@@ -203,6 +234,9 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       reencode_result: "ok",
       reencode_error: "",
       sample_seconds: rowSample !== undefined ? String(rowSample) : "",
+      extrapolated_reencoded_size_bytes: extrapolation ? extrapolation.sizeBytes.toFixed(0) : "",
+      extrapolated_size_optimization_pct: extrapolation ? extrapolation.pct.toFixed(2) : "",
+      extrapolated_size_optimization_bytes: extrapolation ? extrapolation.savingsBytes.toFixed(0) : "",
     });
     okCount++;
   }
@@ -246,5 +280,8 @@ function passthroughRow(
     reencode_result: result,
     reencode_error: error,
     sample_seconds: sampleSeconds !== undefined ? String(sampleSeconds) : "",
+    extrapolated_reencoded_size_bytes: "",
+    extrapolated_size_optimization_pct: "",
+    extrapolated_size_optimization_bytes: "",
   };
 }
