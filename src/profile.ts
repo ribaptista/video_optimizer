@@ -21,4 +21,4 @@ export const ENCODING_PROFILE = {
 // Pinned to the ffprobe/ffmpeg version found on the machine this profile
 // was designed against. A mismatch doesn't stop the tool, only warns,
 // since ffprobe's JSON field set can shift subtly across versions.
-export const PINNED_FFMPEG_VERSION = "8.0.1";
+export const PINNED_FFMPEG_VERSION = "8.0.1-3ubuntu2";
