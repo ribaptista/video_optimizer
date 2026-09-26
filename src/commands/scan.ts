@@ -1,7 +1,7 @@
 import pLimit from "p-limit";
 import { findVideoFiles } from "../lib/videoFiles.js";
 import { probeVideoFile } from "../lib/ffprobe.js";
-import { writeCsv } from "../lib/csv.js";
+import { CsvWriter } from "../lib/csv.js";
 import { warnIfVersionMismatch } from "../lib/versionCheck.js";
 import { SCAN_COLUMNS, type ScanRow } from "../types.js";
 
@@ -17,29 +17,32 @@ export async function runScan(options: ScanOptions): Promise<void> {
   const files = await findVideoFiles(options.directory);
   console.log(`[scan] found ${files.length} video file(s) under ${options.directory}`);
 
+  const writer = new CsvWriter<ScanRow>(options.output, SCAN_COLUMNS);
+  let okCount = 0;
+  let errorCount = 0;
+
   const limit = pLimit(options.concurrency);
-  const rows: ScanRow[] = await Promise.all(
+  await Promise.all(
     files.map((filePath) =>
-      limit(async (): Promise<ScanRow> => {
+      limit(async (): Promise<void> => {
         try {
           const metadata = await probeVideoFile(filePath);
           console.log(`[scan] ok     ${filePath}`);
-          return { ...metadata, scan_result: "ok", scan_error: "" };
+          writer.writeRow({ ...metadata, scan_result: "ok", scan_error: "" });
+          okCount++;
         } catch (err) {
           const message = errorMessage(err);
           console.log(`[scan] error  ${filePath}: ${message}`);
-          return emptyErrorRow(filePath, message);
+          writer.writeRow(emptyErrorRow(filePath, message));
+          errorCount++;
         }
       }),
     ),
   );
 
-  await writeCsv(options.output, SCAN_COLUMNS, rows);
+  await writer.close();
 
-  const okCount = rows.filter((r) => r.scan_result === "ok").length;
-  console.log(
-    `[scan] done: ${okCount} ok, ${rows.length - okCount} error, wrote ${options.output}`,
-  );
+  console.log(`[scan] done: ${okCount} ok, ${errorCount} error, wrote ${options.output}`);
 }
 
 function errorMessage(err: unknown): string {
@@ -69,6 +72,7 @@ function emptyErrorRow(filePath: string, message: string): ScanRow {
     height: "",
     frame_rate: "",
     video_bit_rate: "",
+    bits_per_pixel_per_frame: "",
     color_primaries: "",
     color_transfer: "",
     color_space: "",

@@ -1,5 +1,5 @@
 import { mkdir, stat } from "node:fs/promises";
-import { readCsv, writeCsv } from "../lib/csv.js";
+import { readCsv, CsvWriter } from "../lib/csv.js";
 import { buildFfmpegCommand, encodeVideo, getOutputPath } from "../lib/ffmpeg.js";
 import { ENCODING_PROFILE } from "../profile.js";
 import { REENCODE_COLUMNS, type ScanRow, type ReencodeRow } from "../types.js";
@@ -12,6 +12,39 @@ export interface ReencodeOptions {
   output: string;
   minSizeBytes: number;
   onExisting: OnExisting;
+  sampleSeconds?: number;
+}
+
+// The size a `sampleSeconds`-long slice of the source would be expected to
+// take up, from the source's own video bitrate: video_bit_rate * seconds
+// / 8. Comparing the sample's real re-encoded size against this — instead
+// of against the whole file's size — is what makes size_optimization_pct
+// on a sample row a fair preview of the ratio a full re-encode would
+// achieve. This same estimate is also what --sample mode's progress
+// stats (MB/s, ETA, remaining MB) are based on, since in that mode the
+// actual work being done per file is just this slice, not the full file.
+// Falls back to the container's overall bit rate when the video stream
+// didn't report its own (common for some mp4s), and to a plain
+// file-size/duration ratio as a last resort when neither is known.
+function estimateSampleBytes(row: ScanRow, sampleSeconds: number): number {
+  const duration = Number(row.duration_seconds) || 0;
+  const effectiveSample = duration > 0 ? Math.min(sampleSeconds, duration) : sampleSeconds;
+
+  const videoBitRate = Number(row.video_bit_rate) || 0;
+  if (videoBitRate > 0) return (videoBitRate * effectiveSample) / 8;
+
+  const overallBitRate = Number(row.overall_bit_rate) || 0;
+  if (overallBitRate > 0) return (overallBitRate * effectiveSample) / 8;
+
+  const fileSize = Number(row.file_size_bytes) || 0;
+  return duration > 0 ? fileSize * (effectiveSample / duration) : fileSize;
+}
+
+// The size counted toward this row's progress: the full file size in a
+// normal run, or the estimated sample-slice size in --sample mode.
+function rowProgressBytes(row: ScanRow, sampleSeconds: number | undefined): number {
+  if (sampleSeconds === undefined) return Number(row.file_size_bytes) || 0;
+  return estimateSampleBytes(row, sampleSeconds);
 }
 
 export async function runReencode(options: ReencodeOptions): Promise<void> {
@@ -22,17 +55,22 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
   const scanRows = await readCsv<ScanRow>(options.input);
   await mkdir(options.outputDir, { recursive: true });
 
-  console.log(`[reencode] processing ${scanRows.length} row(s) from ${options.input}`);
+  console.log(
+    `[reencode] processing ${scanRows.length} row(s) from ${options.input}${
+      options.sampleSeconds !== undefined ? ` (--sample ${options.sampleSeconds}s: preview only, not a full encode)` : ""
+    }`,
+  );
 
-  // Progress tracking is based on source file size, not just successfully
-  // re-encoded rows — it's meant to answer "how far through the whole
-  // batch (by size) am I", so a skip/error still counts as "processed" for
-  // the purpose of the remaining-bytes estimate.
-  const totalBytes = scanRows.reduce((sum, r) => sum + (Number(r.file_size_bytes) || 0), 0);
+  // Progress tracking is meant to answer "how far through the whole batch
+  // am I", so a skip/error still counts as "processed" for the purpose of
+  // the remaining-bytes estimate. In --sample mode this is based on the
+  // estimated sample-slice size per file (rowProgressBytes), not the full
+  // file size, since that's the actual amount of work being done per file.
+  const totalBytes = scanRows.reduce((sum, r) => sum + rowProgressBytes(r, options.sampleSeconds), 0);
   const runStart = Date.now();
   let processedBytes = 0;
 
-  const results: ReencodeRow[] = [];
+  const writer = new CsvWriter<ReencodeRow>(options.output, REENCODE_COLUMNS);
   let okCount = 0;
   let errorCount = 0;
   let skipSizeCount = 0;
@@ -40,50 +78,57 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
   let skipExistsCount = 0;
 
   for (const row of scanRows) {
-    const rowSizeBytes = Number(row.file_size_bytes) || 0;
+    // The min-size-bytes check always applies to the real full file size,
+    // regardless of --sample; progressBytes is what's actually counted as
+    // "this row's share of the work" (full size normally, estimated
+    // sample-slice size in --sample mode) for both the running MB/s & ETA
+    // stats and the size_optimization_pct comparison below.
+    const fullSizeBytes = Number(row.file_size_bytes) || 0;
+    const progressBytes = rowProgressBytes(row, options.sampleSeconds);
 
     if (row.scan_result !== "ok") {
       console.log(`[reencode] skip_scan_error  ${row.file_path}`);
-      results.push(passthroughRow(row, "skip_scan_error", row.scan_error));
+      writer.writeRow(passthroughRow(row, "skip_scan_error", row.scan_error, "", "", options.sampleSeconds));
       skipScanCount++;
-      processedBytes += rowSizeBytes;
+      processedBytes += progressBytes;
       continue;
     }
 
-    const sizeBytes = rowSizeBytes;
-    if (options.minSizeBytes > 0 && sizeBytes < options.minSizeBytes) {
-      console.log(`[reencode] skip_size  ${row.file_path} (${sizeBytes} < ${options.minSizeBytes} bytes)`);
-      results.push(passthroughRow(row, "skip_size", ""));
+    if (options.minSizeBytes > 0 && fullSizeBytes < options.minSizeBytes) {
+      console.log(`[reencode] skip_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`);
+      writer.writeRow(passthroughRow(row, "skip_size", "", "", "", options.sampleSeconds));
       skipSizeCount++;
-      processedBytes += rowSizeBytes;
+      processedBytes += progressBytes;
       continue;
     }
 
     // The output filename is a deterministic hash of the source path +
-    // profile id, so a file already sitting there is exactly what a prior
-    // run of this same file/profile would have produced.
-    const existingPath = getOutputPath(row, options.outputDir);
+    // profile id (+ sample duration, if any), so a file already sitting
+    // there is exactly what a prior run of this same file/profile/sample
+    // would have produced.
+    const existingPath = getOutputPath(row, options.outputDir, options.sampleSeconds);
     const existingStat = await stat(existingPath).catch(() => null);
 
     if (existingStat) {
       if (options.onExisting === "skip") {
-        const optimizationPct = (1 - existingStat.size / sizeBytes) * 100;
+        const optimizationPct = (1 - existingStat.size / progressBytes) * 100;
         console.log(
           `[reencode] skip_exists  ${row.file_path} (reusing ${existingPath} from a previous run)`,
         );
-        results.push({
+        writer.writeRow({
           ...row,
           output_file_path: existingPath,
           output_file_size_bytes: String(existingStat.size),
           size_optimization_pct: optimizationPct.toFixed(2),
           profile_id: ENCODING_PROFILE.id,
-          ffmpeg_command: buildFfmpegCommand(row, options.outputDir),
+          ffmpeg_command: buildFfmpegCommand(row, options.outputDir, options.sampleSeconds),
           reencode_action: "reuse",
           reencode_result: "ok",
           reencode_error: "",
+          sample_seconds: options.sampleSeconds !== undefined ? String(options.sampleSeconds) : "",
         });
         skipExistsCount++;
-        processedBytes += rowSizeBytes;
+        processedBytes += progressBytes;
         continue;
       }
       console.log(`[reencode] warning  output already exists and will be overwritten: ${existingPath}`);
@@ -91,24 +136,26 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
 
     console.log(`[reencode] start  ${row.file_path}`);
     const rowStart = Date.now();
-    const encodeResult = await encodeVideo(row, options.outputDir);
+    const encodeResult = await encodeVideo(row, options.outputDir, options.sampleSeconds);
     if (!encodeResult.ok) {
       console.log(`[reencode] error  ${row.file_path}: ${encodeResult.errorSummary}`);
-      results.push(passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command, "reencode"));
+      writer.writeRow(
+        passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command, "reencode", options.sampleSeconds),
+      );
       errorCount++;
-      processedBytes += rowSizeBytes;
+      processedBytes += progressBytes;
       continue;
     }
 
     const rowDurationSeconds = (Date.now() - rowStart) / 1000;
     const outStat = await stat(encodeResult.outputPath);
-    const optimizationPct = (1 - outStat.size / sizeBytes) * 100;
+    const optimizationPct = (1 - outStat.size / progressBytes) * 100;
     console.log(
       `[reencode] ok  ${row.file_path} -> ${encodeResult.outputPath} (${optimizationPct.toFixed(1)}% smaller)`,
     );
     console.log(`[reencode]   took ${formatDuration(rowDurationSeconds)}`);
 
-    processedBytes += rowSizeBytes;
+    processedBytes += progressBytes;
     const elapsedSeconds = (Date.now() - runStart) / 1000;
     const avgMBps = elapsedSeconds > 0 ? bytesToMB(processedBytes) / elapsedSeconds : 0;
     console.log(`[reencode]   avg ${avgMBps.toFixed(2)} MB/s since the start of this run`);
@@ -121,7 +168,7 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       );
     }
 
-    results.push({
+    writer.writeRow({
       ...row,
       output_file_path: encodeResult.outputPath,
       output_file_size_bytes: String(outStat.size),
@@ -131,11 +178,12 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       reencode_action: "reencode",
       reencode_result: "ok",
       reencode_error: "",
+      sample_seconds: options.sampleSeconds !== undefined ? String(options.sampleSeconds) : "",
     });
     okCount++;
   }
 
-  await writeCsv(options.output, REENCODE_COLUMNS, results);
+  await writer.close();
   console.log(
     `[reencode] done: ${okCount} ok, ${errorCount} error, ${skipSizeCount} skip_size, ${skipScanCount} skip_scan_error, ${skipExistsCount} skip_exists, wrote ${options.output}`,
   );
@@ -161,6 +209,7 @@ function passthroughRow(
   error: string,
   command = "",
   action: ReencodeRow["reencode_action"] = "",
+  sampleSeconds?: number,
 ): ReencodeRow {
   return {
     ...row,
@@ -172,5 +221,6 @@ function passthroughRow(
     reencode_action: action,
     reencode_result: result,
     reencode_error: error,
+    sample_seconds: sampleSeconds !== undefined ? String(sampleSeconds) : "",
   };
 }

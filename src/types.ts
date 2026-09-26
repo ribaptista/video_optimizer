@@ -14,6 +14,7 @@ export interface ScanRow {
   height: string;
   frame_rate: string;
   video_bit_rate: string;
+  bits_per_pixel_per_frame: string;
   color_primaries: string;
   color_transfer: string;
   color_space: string;
@@ -45,6 +46,7 @@ export const SCAN_COLUMNS: (keyof ScanRow)[] = [
   "height",
   "frame_rate",
   "video_bit_rate",
+  "bits_per_pixel_per_frame",
   "color_primaries",
   "color_transfer",
   "color_space",
@@ -69,6 +71,7 @@ export interface ReencodeRow extends ScanRow {
   reencode_action: "reencode" | "reuse" | "";
   reencode_result: "ok" | "error" | "skip_size" | "skip_scan_error";
   reencode_error: string;
+  sample_seconds: string;
 }
 
 export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
@@ -81,10 +84,11 @@ export const REENCODE_COLUMNS: (keyof ReencodeRow)[] = [
   "reencode_action",
   "reencode_result",
   "reencode_error",
+  "sample_seconds",
 ];
 
 export interface FinalizeRow extends ReencodeRow {
-  finalize_action: "deleted" | "promoted" | "skip_not_encoded" | "skip_conflict" | "error";
+  finalize_action: "deleted" | "promoted" | "skip_not_encoded" | "skip_conflict" | "skip_sample" | "error";
   conflict_resolution: string;
   finalize_error: string;
   original_archived: "true" | "false";

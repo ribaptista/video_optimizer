@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { Command, Option } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 import { runScan } from "./commands/scan.js";
 import { runReencode, type OnExisting } from "./commands/reencode.js";
 import { runFinalize, type OnExistingFinalize } from "./commands/finalize.js";
+import { parseDurationSeconds } from "./lib/duration.js";
 
 const program = new Command();
 
@@ -40,14 +41,34 @@ program
       .choices(["warn", "skip"])
       .default("warn"),
   )
+  .option(
+    "--sample <duration>",
+    "only re-encode a sample clip of this duration (e.g. 5s, 10s, 1m), taken from the middle of the video, " +
+      "instead of the full file — for quickly previewing compression before committing to a full run",
+    (value: string) => {
+      try {
+        return parseDurationSeconds(value);
+      } catch (err) {
+        throw new InvalidArgumentError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  )
   .action(
-    async (opts: { input: string; outputDir: string; output: string; minSizeBytes: string; onExisting: OnExisting }) => {
+    async (opts: {
+      input: string;
+      outputDir: string;
+      output: string;
+      minSizeBytes: string;
+      onExisting: OnExisting;
+      sample?: number;
+    }) => {
       await runReencode({
         input: opts.input,
         outputDir: opts.outputDir,
         output: opts.output,
         minSizeBytes: Number(opts.minSizeBytes),
         onExisting: opts.onExisting,
+        sampleSeconds: opts.sample,
       });
     },
   );

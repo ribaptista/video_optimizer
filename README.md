@@ -42,7 +42,9 @@ No step ever silently drops a row — a file that fails to probe, is skipped for
 
 All three commands log one line per file to **stdout** as they run (no progress bars), plus a final summary line.
 
-`reencode` additionally prints, after each file it actually re-encodes: how long that encode took, the average throughput (MB of source video processed per second, from the total elapsed time since the run started and the sum of source file sizes gone through so far — including skipped/errored rows, since those still count as "through the batch"), and an ETA to finish the rest (remaining source bytes ÷ that average rate). Reused rows (`--on-existing skip`) don't print these, since no encoding happened for them.
+Every command's output CSV is written **progressively** — the header is written immediately, and each row is appended and flushed to disk as soon as that file finishes processing, not buffered up and written all at once at the end. `tail -f video-scan.csv` (or the `reencode`/`finalize` output) while a long batch is running shows rows landing live.
+
+`reencode` additionally prints, after each file it actually re-encodes: how long that encode took, the average throughput (MB of source video processed per second, from the total elapsed time since the run started and the sum of source file sizes gone through so far — including skipped/errored rows, since those still count as "through the batch"), and an ETA to finish the rest (remaining source bytes ÷ that average rate). Reused rows (`--on-existing skip`) don't print these, since no encoding happened for them. In `--sample` mode, all of this — the % comparison and the MB/s & ETA stats — is based on the estimated size of just the sampled slice per file, not the full file (see `--sample` below).
 
 ## The fixed encoding profile
 
@@ -94,13 +96,25 @@ Each file is encoded into a `.tmp` subdirectory of `--output-dir` first, and onl
 | `-o, --output <path>` | `./reencode-results.csv` | output CSV path |
 | `-m, --min-size-bytes <n>` | `0` (disabled) | skip files smaller than this size |
 | `--on-existing <warn\|skip>` | `warn` | what to do when a file's deterministic output name already exists in `--output-dir` |
+| `--sample <duration>` | *(off)* | only re-encode a sample clip of this length instead of the full file — for quickly previewing compression before committing to a full run |
 
 `--on-existing warn` (the default) logs a warning and overwrites the existing file — this is the safe default when you're not sure whether previous output is still good. `--on-existing skip` treats an existing output file as a completed prior run and reuses it as-is **without re-running ffmpeg** — this is how you resume an interrupted batch: re-run the same `reencode` command with `--on-existing skip` and only the files that never finished (or are new since the last run) actually get encoded. It trusts that an existing file at that deterministic path is genuinely complete and non-corrupted (e.g. from a run that finished normally last time); it does not re-validate the file's contents.
 
 ```bash
 node dist/cli.js reencode --input scan.csv --output-dir ./encoded --min-size-bytes 10485760
 node dist/cli.js reencode --input scan.csv --output-dir ./encoded --on-existing skip   # resume a previous run
+node dist/cli.js reencode --input scan.csv --output-dir ./preview --sample 10s         # quick preview pass
 ```
+
+#### `--sample`: previewing compression before a full run
+
+`--sample <duration>` accepts a plain number of seconds ("10"), a unit-suffixed value ("10s", "1m30s", "1h"), and re-encodes **only that slice** of each file — taken from the **middle** of the video (not the start), to avoid intros/black frames and get a segment more representative of typical content. This makes it fast to sweep an entire library and eyeball which files are worth a full re-encode, without paying the full encode cost for every one.
+
+- **Fair size comparison**: `size_optimization_pct` on a sample row doesn't compare the sample output against the *whole* input file size (which would be a wildly inflated, meaningless "% smaller"). Instead it estimates what that slice of the *original* would have taken up — `video_bit_rate × sample_seconds / 8` (falling back to `overall_bit_rate`, then a plain file-size/duration ratio, if bitrate isn't known) — and compares the real sample output size against that. The MB/s and ETA progress stats are based on this same per-file estimate in `--sample` mode, not full file sizes, since that's the actual amount of work being done per file.
+- **Never collides with a full encode**: the output filename hash includes the sample duration, so `--sample 10s` output never overwrites (or gets mistaken for, under `--on-existing skip`) a full-length encode of the same file, and a different `--sample` duration gets its own filename too.
+- **`finalize` refuses to act on sample rows** — a row with `sample_seconds` set always gets `finalize_action = skip_sample`, never deleted or promoted. Promoting a few seconds of preview footage into place as if it were the real re-encode would be actively destructive (especially combined with `--move-originals`), so re-run `reencode` on a file without `--sample` before finalizing it.
+
+**Is 5 seconds enough?** For a fast sanity sweep across a huge library, sure — but for a real go/no-go decision on any individual file, we'd lean toward **10–20 seconds**. A very short clip is more exposed to the encoder's I-frame/lookahead startup behavior and to just being an unrepresentative moment (a static shot vs. a busy action scene), so the ratio it reports can be noisier than what the full file would actually achieve. Since CRF-based encoding (what this profile uses) doesn't do whole-file rate targeting, a mid-video sample is already fairly representative — 10–20s is enough to smooth out that startup noise without costing much more encode time than 5s does.
 
 ### `finalize`
 
@@ -162,6 +176,7 @@ Each stage's CSV re-emits **every column from its input row** plus its own new c
 | `height` | video height, pixels |
 | `frame_rate` | average frame rate, decimal |
 | `video_bit_rate` | first video stream's bit rate |
+| `bits_per_pixel_per_frame` | `video_bit_rate / (width × height × frame_rate)` — a standard rough gauge of how heavily a video is already compressed relative to its resolution/frame rate; commonly abbreviated "bppf". Very low values (well under ~0.05–0.1 for H.264) suggest a file is already compressed hard and may not shrink much further. Falls back to `overall_bit_rate` when the video stream doesn't report its own bit rate (common for some mp4s) |
 | `color_primaries` | color primaries tag, when present |
 | `color_transfer` | color transfer characteristic tag, when present |
 | `color_space` | color space/matrix tag, when present |
@@ -190,6 +205,7 @@ All `scan` columns above, plus:
 | `reencode_action` | `reencode` (ffmpeg actually ran this time), `reuse` (output already existed and `--on-existing skip` reused it without running ffmpeg), or blank for `skip_size`/`skip_scan_error` rows |
 | `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) — a `reuse` row is still `ok`, since the output file is genuinely complete, just not freshly produced this run |
 | `reencode_error` | ffmpeg error text, or the passed-through `scan_error` for `skip_scan_error` rows |
+| `sample_seconds` | the `--sample` duration used for this run, e.g. `10`; blank if `--sample` wasn't passed. A non-blank value here means `output_file_path` is a short preview clip, not a full re-encode — `finalize` refuses to act on these rows (see `--sample` above) |
 
 ### `finalize` output (`finalize-results.csv`)
 
@@ -197,7 +213,7 @@ All `reencode` columns above, plus:
 
 | Column | Meaning |
 |---|---|
-| `finalize_action` | `deleted`, `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_conflict` (a destination conflict was left unresolved — see below), or `error` |
+| `finalize_action` | `deleted`, `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_conflict` (a destination conflict was left unresolved — see below), `skip_sample` (row is a `--sample` preview, never deleted or promoted), or `error` |
 | `conflict_resolution` | blank on the ordinary happy path; otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `delete`, `promote`, `archive`. Codes: `already_done`, `missing_both` (neither the file to move nor the destination exists — nothing to do, not an error), `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, an unexpected error secondary to a successful promote) |
 | `finalize_error` | error text if `finalize_action = error` |
 | `original_archived` | `true`/`false` — whether the source file ended up archived (freshly, or already archived from a previous run) for this row |

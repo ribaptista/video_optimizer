@@ -58,6 +58,18 @@ function parseFrameRate(rate: string | undefined): string {
   return (num / den).toFixed(3);
 }
 
+// Bits per pixel per frame: video_bit_rate / (width * height * frame_rate).
+// A standard rough gauge of how heavily a video is already compressed
+// relative to its resolution/frame rate — very low bppf (e.g. well under
+// 0.05-0.1 for H.264) suggests it's already compressed hard and may not
+// be worth re-encoding further. Falls back to the container's overall
+// bit rate when the video stream doesn't report its own (common for some
+// mp4s), which slightly overstates bppf by including audio's share.
+function computeBppf(bitRateBitsPerSec: number, width: number, height: number, frameRate: number): string {
+  if (bitRateBitsPerSec <= 0 || width <= 0 || height <= 0 || frameRate <= 0) return "";
+  return (bitRateBitsPerSec / (width * height * frameRate)).toFixed(4);
+}
+
 function parseRotation(stream: FfprobeStream): string {
   const tagRotate = stream.tags?.rotate;
   if (tagRotate) return tagRotate;
@@ -92,6 +104,16 @@ export async function probeVideoFile(
 
   const fileStat = await stat(filePath);
 
+  const frameRate = Number(parseFrameRate(videoStream?.avg_frame_rate || videoStream?.r_frame_rate)) || 0;
+  const videoBitRate = videoStream?.bit_rate ? Number(videoStream.bit_rate) : 0;
+  const overallBitRate = data.format?.bit_rate ? Number(data.format.bit_rate) : 0;
+  const bppf = computeBppf(
+    videoBitRate > 0 ? videoBitRate : overallBitRate,
+    videoStream?.width ?? 0,
+    videoStream?.height ?? 0,
+    frameRate,
+  );
+
   return {
     file_path: path.resolve(filePath),
     file_name: path.basename(filePath),
@@ -108,6 +130,7 @@ export async function probeVideoFile(
     height: videoStream?.height !== undefined ? String(videoStream.height) : "",
     frame_rate: parseFrameRate(videoStream?.avg_frame_rate || videoStream?.r_frame_rate),
     video_bit_rate: videoStream?.bit_rate ?? "",
+    bits_per_pixel_per_frame: bppf,
     color_primaries: videoStream?.color_primaries ?? "",
     color_transfer: videoStream?.color_transfer ?? "",
     color_space: videoStream?.color_space ?? "",

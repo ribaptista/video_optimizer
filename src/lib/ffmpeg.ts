@@ -51,18 +51,22 @@ function summarizeFfmpegStderr(rawStderr: string): string {
   return relevant.join(" | ").slice(-2000);
 }
 
-// Deterministic filename: sha256(absolute source path + profile id). Same
-// source file + same profile always produces the same output filename,
-// which is what makes --on-existing skip a safe "resume" mechanism — a
-// second run recognizes exactly the file a prior run would have produced,
-// without needing any separate state tracking.
-export function getOutputFileName(row: ScanRow): string {
-  const hash = createHash("sha256").update(`${row.file_path}::${ENCODING_PROFILE.id}`).digest("hex").slice(0, 16);
+// Deterministic filename: sha256(absolute source path + profile id +
+// sample duration, if any). Same source file + same profile (+ same
+// --sample duration) always produces the same output filename, which is
+// what makes --on-existing skip a safe "resume" mechanism — a second run
+// recognizes exactly the file a prior run would have produced, without
+// needing any separate state tracking. Baking the sample duration into
+// the hash keeps a --sample preview from ever colliding with (or being
+// mistaken for) a full-length encode of the same file.
+export function getOutputFileName(row: ScanRow, sampleSeconds?: number): string {
+  const key = `${row.file_path}::${ENCODING_PROFILE.id}::sample=${sampleSeconds ?? ""}`;
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
   return `${hash}.${ENCODING_PROFILE.container}`;
 }
 
-export function getOutputPath(row: ScanRow, outputDir: string): string {
-  return path.join(outputDir, getOutputFileName(row));
+export function getOutputPath(row: ScanRow, outputDir: string, sampleSeconds?: number): string {
+  return path.join(outputDir, getOutputFileName(row, sampleSeconds));
 }
 
 // Builds the ffmpeg argv for encoding `row` to `outputPath`, without the
@@ -70,11 +74,27 @@ export function getOutputPath(row: ScanRow, outputDir: string): string {
 // final path. Shared by encodeVideo (execution) and buildFfmpegCommand
 // (audit-trail display for rows that reuse an existing output instead of
 // re-running ffmpeg).
-function buildEncodeArgs(row: ScanRow, outputPath: string): string[] {
-  const args = [
-    "-y",
-    "-i",
-    row.file_path,
+//
+// When `sampleSeconds` is given, only that many seconds are encoded,
+// taken from the middle of the video (skipping intros/black frames and
+// giving a more representative sample than the very start) rather than
+// from time zero. `-ss` is placed before `-i` for fast, keyframe-based
+// input seeking — appropriate here since the goal is a quick preview, not
+// frame-accurate trimming.
+function buildEncodeArgs(row: ScanRow, outputPath: string, sampleSeconds?: number): string[] {
+  const args: string[] = ["-y"];
+
+  if (sampleSeconds !== undefined) {
+    const duration = Number(row.duration_seconds) || 0;
+    const clampedSample = duration > 0 ? Math.min(sampleSeconds, duration) : sampleSeconds;
+    const offset = Math.max(0, (duration - clampedSample) / 2);
+    if (offset > 0) args.push("-ss", offset.toFixed(2));
+    args.push("-i", row.file_path, "-t", clampedSample.toFixed(2));
+  } else {
+    args.push("-i", row.file_path);
+  }
+
+  args.push(
     // Map video/audio/subtitle streams explicitly (each with "?" so a
     // source lacking that stream type doesn't fail the whole map) rather
     // than a blanket "-map 0". Some sources carry extra data/attachment
@@ -101,7 +121,7 @@ function buildEncodeArgs(row: ScanRow, outputPath: string): string[] {
     String(ENCODING_PROFILE.video.crf),
     "-pix_fmt",
     ENCODING_PROFILE.video.pixFmt,
-  ];
+  );
 
   // Explicitly pass through color tags — a re-encode does not automatically
   // inherit the source's color metadata the way an untouched copy would.
@@ -121,11 +141,11 @@ function buildEncodeArgs(row: ScanRow, outputPath: string): string[] {
 // The command as it would look writing straight to the final path in
 // outputDir — used both for the audit-trail column on a fresh encode and,
 // unexecuted, for a row that reuses a previous run's output.
-export function buildFfmpegCommand(row: ScanRow, outputDir: string): string {
-  return formatCommand("ffmpeg", buildEncodeArgs(row, getOutputPath(row, outputDir)));
+export function buildFfmpegCommand(row: ScanRow, outputDir: string, sampleSeconds?: number): string {
+  return formatCommand("ffmpeg", buildEncodeArgs(row, getOutputPath(row, outputDir, sampleSeconds), sampleSeconds));
 }
 
-export async function encodeVideo(row: ScanRow, outputDir: string): Promise<EncodeResult> {
+export async function encodeVideo(row: ScanRow, outputDir: string, sampleSeconds?: number): Promise<EncodeResult> {
   // Encode into a temp subdirectory of outputDir first, and only move the
   // result into outputDir itself once ffmpeg has actually finished
   // successfully — so a crash or an interrupted run never leaves a
@@ -133,7 +153,7 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
   const tempDir = path.join(outputDir, ".tmp");
   await mkdir(tempDir, { recursive: true });
 
-  const fileName = getOutputFileName(row);
+  const fileName = getOutputFileName(row, sampleSeconds);
   const tempOutputPath = path.join(tempDir, fileName);
   const finalOutputPath = path.join(outputDir, fileName);
 
@@ -141,8 +161,8 @@ export async function encodeVideo(row: ScanRow, outputDir: string): Promise<Enco
   // path — the temp-dir staging is an internal implementation detail that
   // shouldn't leak into the audit trail a user might copy-paste to
   // reproduce this encode.
-  const command = formatCommand("ffmpeg", buildEncodeArgs(row, finalOutputPath));
-  const args = buildEncodeArgs(row, tempOutputPath);
+  const command = formatCommand("ffmpeg", buildEncodeArgs(row, finalOutputPath, sampleSeconds));
+  const args = buildEncodeArgs(row, tempOutputPath, sampleSeconds);
 
   const stderrChunks: Buffer[] = [];
   const ok = await new Promise<boolean>((resolve) => {

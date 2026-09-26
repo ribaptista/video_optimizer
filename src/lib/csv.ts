@@ -1,5 +1,4 @@
-import { createReadStream } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
 import { parse } from "csv-parse";
 import { stringify } from "csv-stringify/sync";
 
@@ -14,14 +13,28 @@ export async function readCsv<T extends object>(filePath: string): Promise<T[]> 
   return rows;
 }
 
-export async function writeCsv<T extends object>(
-  filePath: string,
-  columns: (keyof T)[],
-  rows: T[],
-): Promise<void> {
-  const csv = stringify(rows as Record<string, unknown>[], {
-    header: true,
-    columns: columns as string[],
-  });
-  await writeFile(filePath, csv);
+// Writes a header immediately on construction and appends one row at a
+// time as writeRow is called, so the file on disk always reflects
+// everything processed so far — a `tail -f` on it during a long run shows
+// rows landing live instead of nothing until the whole command finishes.
+export class CsvWriter<T extends object> {
+  private readonly stream: ReturnType<typeof createWriteStream>;
+  private readonly columns: string[];
+
+  constructor(filePath: string, columns: (keyof T)[]) {
+    this.columns = columns as string[];
+    this.stream = createWriteStream(filePath);
+    this.stream.write(stringify([], { header: true, columns: this.columns }));
+  }
+
+  writeRow(row: T): void {
+    this.stream.write(stringify([row as Record<string, unknown>], { header: false, columns: this.columns }));
+  }
+
+  close(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.stream.on("error", reject);
+      this.stream.end(() => resolve());
+    });
+  }
 }

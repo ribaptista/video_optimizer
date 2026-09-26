@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, unlink, stat } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
-import { readCsv, writeCsv } from "../lib/csv.js";
+import { readCsv, CsvWriter } from "../lib/csv.js";
 import { moveFile } from "../lib/moveFile.js";
 import { FINALIZE_COLUMNS, type ReencodeRow, type FinalizeRow } from "../types.js";
 
@@ -125,17 +125,18 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
     `[finalize] processing ${rows.length} row(s) from ${options.input}${options.dryRun ? " (dry run)" : ""}`,
   );
 
-  const results: FinalizeRow[] = [];
+  const writer = new CsvWriter<FinalizeRow>(options.output, FINALIZE_COLUMNS);
   let deleted = 0;
   let promoted = 0;
   let skipConflict = 0;
   let skipped = 0;
+  let skipSample = 0;
   let errored = 0;
 
   for (const row of rows) {
     if (row.reencode_result !== "ok") {
       console.log(`[finalize] skip_not_encoded  ${row.file_path}`);
-      results.push({
+      writer.writeRow({
         ...row,
         finalize_action: "skip_not_encoded",
         conflict_resolution: "",
@@ -143,6 +144,26 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
         original_archived: "false",
       });
       skipped++;
+      continue;
+    }
+
+    // A --sample row is a short preview clip, not a full re-encode — never
+    // let it flow into the delete/promote logic below, since "promoting"
+    // it would rename a few seconds of preview footage into place as if
+    // it were the real re-encoded file. Re-run reencode on this file
+    // without --sample first.
+    if (row.sample_seconds) {
+      console.log(
+        `[finalize] skip_sample  ${row.file_path} (this is a ${row.sample_seconds}s sample preview, not a full re-encode)`,
+      );
+      writer.writeRow({
+        ...row,
+        finalize_action: "skip_sample",
+        conflict_resolution: "",
+        finalize_error: "",
+        original_archived: "false",
+      });
+      skipSample++;
       continue;
     }
 
@@ -154,7 +175,7 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
           console.log(
             `[finalize] warning  ${row.output_file_path} no longer exists — treating as already deleted from a previous run`,
           );
-          results.push({
+          writer.writeRow({
             ...row,
             finalize_action: "deleted",
             conflict_resolution: "delete:already_done",
@@ -175,7 +196,7 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
             `[finalize] deleted  ${row.output_file_path} (${optimizationPct.toFixed(1)}% < ${options.threshold}%)`,
           );
         }
-        results.push({ ...row, finalize_action: "deleted", conflict_resolution: "", finalize_error: "", original_archived: "false" });
+        writer.writeRow({ ...row, finalize_action: "deleted", conflict_resolution: "", finalize_error: "", original_archived: "false" });
         deleted++;
         continue;
       }
@@ -266,7 +287,7 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
       }
 
       const rowAction: FinalizeRow["finalize_action"] = promotedThisRow ? "promoted" : "skip_conflict";
-      results.push({
+      writer.writeRow({
         ...row,
         finalize_action: rowAction,
         conflict_resolution: conflictCodes.join(" | "),
@@ -278,14 +299,14 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.log(`[finalize] error  ${row.file_path}: ${message}`);
-      results.push({ ...row, finalize_action: "error", conflict_resolution: "", finalize_error: message, original_archived: "false" });
+      writer.writeRow({ ...row, finalize_action: "error", conflict_resolution: "", finalize_error: message, original_archived: "false" });
       errored++;
     }
   }
 
-  await writeCsv(options.output, FINALIZE_COLUMNS, results);
+  await writer.close();
   console.log(
-    `[finalize] done: ${deleted} deleted, ${promoted} promoted, ${skipConflict} skip_conflict, ${skipped} skip_not_encoded, ${errored} error, wrote ${options.output}${
+    `[finalize] done: ${deleted} deleted, ${promoted} promoted, ${skipConflict} skip_conflict, ${skipped} skip_not_encoded, ${skipSample} skip_sample, ${errored} error, wrote ${options.output}${
       options.dryRun ? " (dry run — no files were changed)" : ""
     }`,
   );
