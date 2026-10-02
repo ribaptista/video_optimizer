@@ -21,6 +21,56 @@ npx tsx src/cli.ts <command> ...
 
 Requires `ffmpeg`/`ffprobe` on `PATH`. This profile was designed against ffmpeg/ffprobe **8.0.1-3ubuntu2**; the `scan` command prints a non-fatal warning if a different version is detected.
 
+## Docker
+
+The repository's [`Dockerfile`](Dockerfile) builds a self-contained image with the CLI and `ffmpeg`/`ffprobe` already installed and pinned — no separate `npm install`/`apt install` step, and no risk of running against an unexpectedly different ffmpeg build than the one the image was tested with. This is the fastest way to get a fully working `video-optimizer`, including `--crop-detect`, without touching the host at all.
+
+```bash
+docker build -t video-optimizer .
+```
+
+Every command reads and/or writes a video library directory, CSV files, and (for `scan --crop-detect`) a crop-preview directory — all of that needs to persist on the host across separate `docker run` invocations (a `scan` CSV feeding a later `reencode`, a `reencode --output-dir` the next `finalize` promotes files out of, etc.), so bind-mount a directory and point every CLI path at somewhere under it, rather than relying on the container's own filesystem:
+
+```bash
+docker run --rm -it \
+  --user "$(id -u):$(id -g)" \
+  -v /path/to/your/videos:/data \
+  video-optimizer scan /data --output /data/scan.csv --crop-detect --preview-dir /data/previews
+
+docker run --rm -it \
+  --user "$(id -u):$(id -g)" \
+  -v /path/to/your/videos:/data \
+  video-optimizer reencode --input /data/scan.csv --output-dir /data/encoded --output /data/reencode-results.csv
+```
+
+Two things to not skip:
+
+- **`--user "$(id -u):$(id -g)"` is not optional in practice** — the image runs as its own unprivileged user by default, whose uid/gid essentially never matches an arbitrary bind-mounted host directory's ownership, and every write into it (`video-scan.csv`, a re-encoded file, a crop preview JPEG) fails with a permission error otherwise.
+- **Always pass `-o`/`--output` explicitly, pointing somewhere under `/data`.** Every command's output CSV path defaults to a relative `./*.csv`, which in the container resolves against the image's own `WORKDIR /app`, not your bind mount — a default-output run under `--user` fails with `EACCES` (`/app` is owned by the image's baked-in uid, not yours), or (without `--user`) silently writes a CSV that's discarded when the container exits.
+
+The image's `ENTRYPOINT` is the CLI itself, so any subcommand works the same way — e.g. `... video-optimizer validate --input /data/reencode-results.csv` — and running the image with no arguments at all prints `--help`.
+
+The `Dockerfile` pins its base image by content digest and `ffmpeg` by exact Debian package version; see the comments at the top of the file for exactly how those were chosen and how to update them later. One deliberate gap: the pinned Debian package (`7.1.5`) is a different, still-maintained build than the `8.0.1-3ubuntu2` this project's encoding profile was developed against (see above), so every `scan` run in the image prints that version-mismatch warning — expected and harmless, not a sign the Docker pin is wrong (Debian's current stable release doesn't carry 8.0.1 at all).
+
+### Multi-platform (arm64)
+
+The image builds and runs correctly on `linux/arm64` (Apple Silicon, Raspberry Pi, AWS Graviton, etc.), not just `linux/amd64` — confirmed directly: built the actual `Dockerfile` under `docker buildx` with QEMU emulation and ran `scan --crop-detect` and `reencode` against real fixture videos through the resulting image, bind-mounted the same way as the amd64 examples above. Everything the image depends on already publishes arm64 builds: the pinned `node:22-trixie-slim` base is a multi-arch manifest list including `linux/arm64/v8`, and Debian trixie's archive carries the exact same pinned `ffmpeg` package version for `arm64` as for `amd64`. Nothing in `package.json` is a native addon, so there's no prebuilt-binary risk on arm64 the way there would be for something like `better-sqlite3`.
+
+On a machine that's natively arm64 (e.g. Apple Silicon), the plain `docker build` command above already produces a native arm64 image — no extra flags needed. Cross-building arm64 from an amd64 host (or vice versa) needs `docker buildx` plus QEMU emulation registered once per host:
+
+```bash
+docker run --rm --privileged tonistiigi/binfmt --install all   # one-time, registers QEMU for all archs
+docker buildx create --use                                      # one-time, a build-capable builder
+
+docker buildx build --platform linux/arm64 -t video-optimizer --load .
+```
+
+`--load` pulls the built image into the local `docker images` list (as `docker build` does implicitly); omit it (and add `--push`) when building for a registry instead. Emulated cross-builds are meaningfully slower than a native build on that architecture — expect several extra minutes on the `apt-get install` step alone — but produce a working arm64 image either way. To publish one image tag that resolves to the right architecture on either host, build and push a real multi-platform manifest instead of `--load`ing a single arch:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/video-optimizer:latest --push .
+```
+
 ## Algorithm overview
 
 ```
