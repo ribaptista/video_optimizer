@@ -28,6 +28,10 @@ export interface ScanRow {
   subtitle_stream_count: string;
   scan_result: "ok" | "error";
   scan_error: string;
+  crop_rect: string;
+  crop_preview_path: string;
+  crop_error: string;
+  cli_arguments: string;
 }
 
 export const SCAN_COLUMNS: (keyof ScanRow)[] = [
@@ -60,6 +64,10 @@ export const SCAN_COLUMNS: (keyof ScanRow)[] = [
   "subtitle_stream_count",
   "scan_result",
   "scan_error",
+  "crop_rect",
+  "crop_preview_path",
+  "crop_error",
+  "cli_arguments",
 ];
 
 export interface ReencodeRow extends ScanRow {

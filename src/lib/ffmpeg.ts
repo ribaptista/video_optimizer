@@ -5,6 +5,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { moveFile } from "./moveFile.js";
 import { ENCODING_PROFILE } from "../profile.js";
 import type { ScanRow } from "../types.js";
+import { displayDimensions, formatCropRect, isFullFrame, parseCropRect, type CropRect } from "./cropDetect.js";
 
 export interface EncodeResult {
   outputPath: string;
@@ -16,12 +17,12 @@ export interface EncodeResult {
 // Quotes an argument for display/copy-paste as a bash command line. Not
 // used to actually execute anything (ffmpeg is always spawned with an argv
 // array, never a shell string), only to populate the CSV's audit column.
-function quoteShellArg(arg: string): string {
+export function quoteShellArg(arg: string): string {
   if (/^[A-Za-z0-9@%_+=:,./-]+$/.test(arg)) return arg;
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
-function formatCommand(bin: string, args: string[]): string {
+export function formatCommand(bin: string, args: string[]): string {
   return [bin, ...args].map(quoteShellArg).join(" ");
 }
 
@@ -59,8 +60,24 @@ function summarizeFfmpegStderr(rawStderr: string): string {
 // needing any separate state tracking. Baking the sample duration into
 // the hash keeps a --sample preview from ever colliding with (or being
 // mistaken for) a full-length encode of the same file.
+// A row's crop_rect only counts as an applied crop when it parses and
+// actually crops something — a full-frame rect (a no-op, e.g. from a
+// video that genuinely has no bars, or an unparseable/blank value from an
+// older scan CSV) is treated the same as no crop at all.
+function getAppliedCrop(row: ScanRow): CropRect | null {
+  const rect = parseCropRect(row.crop_rect);
+  if (!rect) return null;
+  const { width, height } = displayDimensions(row);
+  if (width <= 0 || height <= 0) return null;
+  if (isFullFrame(rect, width, height)) return null;
+  return rect;
+}
+
 export function getOutputFileName(row: ScanRow, sampleSeconds?: number): string {
-  const key = `${row.file_path}::${ENCODING_PROFILE.id}::sample=${sampleSeconds ?? ""}`;
+  const appliedCrop = getAppliedCrop(row);
+  const key =
+    `${row.file_path}::${ENCODING_PROFILE.id}::sample=${sampleSeconds ?? ""}` +
+    (appliedCrop ? `::crop=${formatCropRect(appliedCrop)}` : "");
   const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
   return `${hash}.${ENCODING_PROFILE.container}`;
 }
@@ -92,6 +109,11 @@ function buildEncodeArgs(row: ScanRow, outputPath: string, sampleSeconds?: numbe
     args.push("-i", row.file_path, "-t", clampedSample.toFixed(2));
   } else {
     args.push("-i", row.file_path);
+  }
+
+  const appliedCrop = getAppliedCrop(row);
+  if (appliedCrop) {
+    args.push("-vf", `crop=${appliedCrop.w}:${appliedCrop.h}:${appliedCrop.x}:${appliedCrop.y}`);
   }
 
   args.push(
