@@ -1,7 +1,7 @@
 # video-optimizer
 
 A three-stage CLI for shrinking a video library's storage footprint:
-**scan** a directory for video files → **reencode** them with one fixed, versioned encoding profile → **finalize** by promoting only the encodes that actually saved enough space (never deleting anything — low-gain encodes are simply left in place).
+**scan** a directory for video files → **reencode** them with one fixed, versioned encoding profile → **validate** their durations → **finalize** by promoting only the encodes that actually saved enough space (never deleting anything — low-gain encodes are simply left in place).
 
 Every stage is fully auditable: every input row always produces exactly one output row, tagged with a per-stage result column, so the final CSV is a complete trail from source file to final outcome.
 
@@ -40,7 +40,7 @@ scan <dir>                       reencode                          finalize
 
 No step ever silently drops a row — a file that fails to probe, is skipped for being too small, fails to encode, or doesn't clear the optimization threshold still gets a row in that stage's output CSV explaining what happened, so you can always account for every file that went into `scan`.
 
-All three commands log one line per file to **stdout** as they run (no progress bars), plus a final summary line.
+All four commands log one line per file to **stdout** as they run (no progress bars), plus a final summary line.
 
 Every command's output CSV is written **progressively** — the header is written immediately, and each row is appended and flushed to disk as soon as that file finishes processing, not buffered up and written all at once at the end. `tail -f video-scan.csv` (or the `reencode`/`finalize` output) while a long batch is running shows rows landing live.
 
@@ -81,6 +81,30 @@ Recursively finds video files (`.mp4 .mkv .mov .avi .wmv .flv .webm .m4v .mpg .m
 node dist/cli.js scan ~/Videos --output scan.csv --concurrency 8
 ```
 
+#### `--crop-detect`: detecting letterbox/pillarbox crop areas
+
+Passing `--crop-detect` runs ffmpeg's `cropdetect` filter against each file (at a few sample points through its duration) to find the real picture area inside any black letterbox/pillarbox bars, records the result in the CSV, and writes a preview JPEG with the chosen area boxed in green so it can be eyeballed before trusting it. `reencode` then crops to this area automatically (see below) — `scan` itself never modifies anything.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--crop-detect` | *(off)* | enable crop detection; every other `--crop-*`/`--preview-dir` flag requires this to be set |
+| `--crop-ignore <top,right,bottom,left>` | `0,0,0,0` | pixels to pre-crop from each edge **before** running cropdetect, then stretched back out afterward if that edge turns out to have no real padding (see below) — use this to blind cropdetect to a burned-in overlay or timestamp sitting near an edge, which would otherwise make cropdetect think that edge has no bars to crop |
+| `--crop-single-axis` | *(off)* | if the detected area crops on both axes (both letterboxed and pillarboxed), keep only the crop on the dominant axis and restore the other axis to the full frame |
+| `--crop-max-ratio <n>` | `0` (disabled) | if the resulting area's long/short side ratio exceeds this, grow the short side back out (symmetrically, clamped to the frame) until it meets it — e.g. `1.7778` stops a crop from ever going tighter than 16:9 |
+| `--crop-limit <n>` | `16` | forwarded to ffmpeg's `cropdetect=limit=` (black-level threshold) |
+| `--crop-round <n>` | `2` | forwarded to ffmpeg's `cropdetect=round=`; also the tolerance (in pixels) below which a detected edge is treated as "no padding" when deciding whether to stretch back to that edge |
+| `--crop-frames <n>` | `16` | frames sampled by cropdetect at each sample point (`-frames:v`) |
+| `--crop-samples <list>` | `0.25,0.5,0.75` | comma-separated fractions (each in `[0,1)`) of the video's duration to sample; the final area is the union of what's detected at each point, so a region that's only non-black in one sample is still kept |
+| `--preview-dir <path>` | `./crop-previews` | directory the crop-preview JPEGs are written into |
+
+**How the final area is computed, in order:** detect at each `--crop-samples` point (within the `--crop-ignore` margins, if any) → union the per-sample results → stretch any edge with no real padding back out to the true frame edge (absorbing its ignore margin) → apply `--crop-single-axis`, if set → apply `--crop-max-ratio`, if set → round to even `x`/`y`/`w`/`h` (required for `yuv420p`).
+
+```bash
+node dist/cli.js scan ~/Videos --crop-detect
+node dist/cli.js scan ~/Videos --crop-detect --crop-ignore 0,0,40,100   # ignore a bottom-left timestamp overlay
+node dist/cli.js scan ~/Videos --crop-detect --crop-max-ratio 1.7778 --preview-dir ./previews
+```
+
 ### `reencode`
 
 Reads a `scan` CSV and re-encodes each probeable file **sequentially** (a single `libx264 -preset slow` encode already uses all available cores, so parallel ffmpeg processes would just contend for the same CPU).
@@ -88,6 +112,8 @@ Reads a `scan` CSV and re-encodes each probeable file **sequentially** (a single
 Each file is encoded into a `.tmp` subdirectory of `--output-dir` first, and only moved into `--output-dir` itself once ffmpeg exits successfully — so a crash or an interrupted run never leaves a partial/corrupt file sitting in the final output directory.
 
 **Output filenames are deterministic**: `sha256(absolute source path + profile id)`, truncated to 16 hex characters, e.g. `1d86e01e58d38184.mkv`. The same source file re-encoded with the same profile always produces the same filename — that's what makes resuming a previous run possible (see `--on-existing` below), and it means changing the profile (which bumps `ENCODING_PROFILE.id`, see [The fixed encoding profile](#the-fixed-encoding-profile)) naturally produces a fresh set of filenames rather than colliding with old ones.
+
+**If the input row has a `crop_rect`** (from `scan --crop-detect`, see above) that actually crops something — i.e. it isn't blank and isn't the full frame — the crop is applied during the encode via `-vf crop=w:h:x:y`, and the crop area is folded into the output filename hash too, so a cropped encode never collides with (or gets mistaken for, under `--on-existing skip`) an uncropped encode of the same file. A blank or full-frame `crop_rect` — including CSVs from before this feature existed — is treated as no crop at all, with no change to the filename hash.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -117,6 +143,20 @@ node dist/cli.js reencode --input scan.csv --output-dir ./preview --sample 10s  
 - **Extrapolated full-file projection**: on a genuine sample row (`sample_seconds` non-blank), three extra columns project the sample's observed compression ratio onto the *whole* file — `extrapolated_reencoded_size_bytes` (estimated full-file output size), `extrapolated_size_optimization_pct` (comes out numerically equal to `size_optimization_pct`, since it's the same ratio just scaled — included so it's there without recomputing it), and `extrapolated_size_optimization_bytes` (estimated bytes saved for the whole file: `file_size_bytes - extrapolated_reencoded_size_bytes`). This assumes the sampled slice is representative of the whole file's compressibility — the same assumption `--sample` is built on. All three are blank for non-sample rows, where the real `size_optimization_pct`/sizes already answer this directly.
 
 **Is 5 seconds enough?** For a fast sanity sweep across a huge library, sure — but for a real go/no-go decision on any individual file, we'd lean toward **10–20 seconds**. A very short clip is more exposed to the encoder's I-frame/lookahead startup behavior and to just being an unrepresentative moment (a static shot vs. a busy action scene), so the ratio it reports can be noisier than what the full file would actually achieve. Since CRF-based encoding (what this profile uses) doesn't do whole-file rate targeting, a mid-video sample is already fairly representative — 10–20s is enough to smooth out that startup noise without costing much more encode time than 5s does.
+
+### `validate`
+
+Reads a `reencode` CSV and uses `ffprobe` to compare the source and output duration for every `reencode_result = ok` row. It prints the source duration, output duration, and signed difference for each row. A row is reported as an error when its absolute difference exceeds the configured limit; after the complete report and summary, the command exits unsuccessfully when there are mismatches or probe failures. Rows that were not successfully re-encoded are reported but not probed.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-i, --input <path>` | *required* | CSV produced by `reencode` |
+| `-t, --max-difference-seconds <n>` | `1` | maximum allowed absolute source/output duration difference in seconds |
+
+```bash
+node dist/cli.js validate --input reencode-results.csv
+node dist/cli.js validate --input reencode-results.csv --max-difference-seconds 0.25
+```
 
 ### `finalize`
 
@@ -194,6 +234,10 @@ Each stage's CSV re-emits **every column from its input row** plus its own new c
 | `subtitle_stream_count` | how many subtitle streams the file has |
 | `scan_result` | `ok` or `error` |
 | `scan_error` | ffprobe error text when `scan_result = error` (metadata columns are blank in that case) |
+| `crop_rect` | the detected crop area as `wxh+x+y`, when `--crop-detect` was passed and detection succeeded; blank otherwise (including every row when `--crop-detect` wasn't used) |
+| `crop_preview_path` | path to the crop-preview JPEG (see `--crop-detect` above); blank unless `crop_rect` is set |
+| `crop_error` | error text if crop detection or preview generation failed; a crop failure never turns `scan_result` into `error` — the row is still `ok`, just without a crop area |
+| `cli_arguments` | the full `scan` command line that produced this CSV, quoted for copy-paste; populated **only on the first row written**, blank on every other row (it's the same for the whole run, so repeating it per-row would just be noise) |
 
 ### `reencode` output (`reencode-results.csv`)
 

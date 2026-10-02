@@ -82,7 +82,9 @@ function parseRotation(stream: FfprobeStream): string {
 
 export async function probeVideoFile(
   filePath: string,
-): Promise<Omit<ScanRow, "scan_result" | "scan_error">> {
+): Promise<
+  Omit<ScanRow, "scan_result" | "scan_error" | "crop_rect" | "crop_preview_path" | "crop_error" | "cli_arguments">
+> {
   const { stdout } = await execFileAsync("ffprobe", [
     "-v",
     "error",
