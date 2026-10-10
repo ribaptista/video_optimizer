@@ -100,20 +100,20 @@ Every command's output CSV is written **progressively** — the header is writte
 
 Defined once in [`src/profile.ts`](src/profile.ts) as `ENCODING_PROFILE`. Its `id` must change whenever any value below changes — the id is embedded in the `reencode`/`finalize` CSVs and in promoted filenames, so it's how the pipeline tells old encodes apart from new ones.
 
-| Parameter | Value |
-|---|---|
-| Profile id | `h264-crf20-slow-yuv420p-v2` |
-| Video codec | `libx264` |
-| Preset | `slow` |
-| CRF | `20` |
-| Pixel format | `yuv420p` (8-bit, 4:2:0 — fixed regardless of source, for maximum playback compatibility) |
-| Container | `mkv` |
-| Audio (PCM source) | re-encoded to `aac` @ `256k` |
-| Audio (non-PCM source) | stream-copied unchanged (already-compressed audio isn't worth re-encoding for negligible size savings) |
-| Subtitles | stream-copied unchanged |
-| Metadata / chapters | copied from source (`-map_metadata 0 -map_chapters 0`) |
-| Color primaries / transfer / colorspace | explicitly passed through from the source's probed values, when present |
-| Resolution / frame rate | preserved from source (no scaling or frame-rate conversion is applied) |
+| Parameter                               | Value                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Profile id                              | `h264-crf20-slow-yuv420p-v2`                                                                           |
+| Video codec                             | `libx264`                                                                                              |
+| Preset                                  | `slow`                                                                                                 |
+| CRF                                     | `20`                                                                                                   |
+| Pixel format                            | `yuv420p` (8-bit, 4:2:0 — fixed regardless of source, for maximum playback compatibility)              |
+| Container                               | `mkv`                                                                                                  |
+| Audio (PCM source)                      | re-encoded to `aac` @ `256k`                                                                           |
+| Audio (non-PCM source)                  | stream-copied unchanged (already-compressed audio isn't worth re-encoding for negligible size savings) |
+| Subtitles                               | stream-copied unchanged                                                                                |
+| Metadata / chapters                     | copied from source (`-map_metadata 0 -map_chapters 0`)                                                 |
+| Color primaries / transfer / colorspace | explicitly passed through from the source's probed values, when present                                |
+| Resolution / frame rate                 | preserved from source (no scaling or frame-rate conversion is applied)                                 |
 
 ## Commands
 
@@ -121,11 +121,11 @@ Defined once in [`src/profile.ts`](src/profile.ts) as `ENCODING_PROFILE`. Its `i
 
 Recursively finds video files (`.mp4 .mkv .mov .avi .wmv .flv .webm .m4v .mpg .mpeg .ts .m2ts .3gp .vob .ogv`) and probes each with `ffprobe`.
 
-| Argument / Flag | Default | Meaning |
-|---|---|---|
-| `<directory>` | *required* | directory to scan recursively (positional argument) |
-| `-o, --output <path>` | `./video-scan.csv` | output CSV path |
-| `-c, --concurrency <n>` | `4` | concurrent `ffprobe` processes |
+| Argument / Flag         | Default            | Meaning                                             |
+| ----------------------- | ------------------ | --------------------------------------------------- |
+| `<directory>`           | _required_         | directory to scan recursively (positional argument) |
+| `-o, --output <path>`   | `./video-scan.csv` | output CSV path                                     |
+| `-c, --concurrency <n>` | `4`                | concurrent `ffprobe` processes                      |
 
 ```bash
 node dist/cli.js scan ~/Videos --output scan.csv --concurrency 8
@@ -135,17 +135,17 @@ node dist/cli.js scan ~/Videos --output scan.csv --concurrency 8
 
 Passing `--crop-detect` runs ffmpeg's `cropdetect` filter against each file (at a few sample points through its duration) to find the real picture area inside any black letterbox/pillarbox bars, records the result in the CSV, and writes a preview JPEG with the chosen area boxed in green so it can be eyeballed before trusting it. `reencode` then crops to this area automatically (see below) — `scan` itself never modifies anything.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--crop-detect` | *(off)* | enable crop detection; every other `--crop-*`/`--preview-dir` flag requires this to be set |
-| `--crop-ignore <top,right,bottom,left>` | `0,0,0,0` | pixels to pre-crop from each edge **before** running cropdetect, then stretched back out afterward if that edge turns out to have no real padding (see below) — use this to blind cropdetect to a burned-in overlay or timestamp sitting near an edge, which would otherwise make cropdetect think that edge has no bars to crop |
-| `--crop-single-axis` | *(off)* | if the detected area crops on both axes (both letterboxed and pillarboxed), keep only the crop on the dominant axis and restore the other axis to the full frame |
-| `--crop-max-ratio <n>` | `0` (disabled) | if the resulting area's long/short side ratio exceeds this, grow the short side back out (symmetrically, clamped to the frame) until it meets it — e.g. `1.7778` stops a crop from ever going tighter than 16:9 |
-| `--crop-limit <n>` | `16` | forwarded to ffmpeg's `cropdetect=limit=` (black-level threshold) |
-| `--crop-round <n>` | `2` | forwarded to ffmpeg's `cropdetect=round=`; also the tolerance (in pixels) below which a detected edge is treated as "no padding" when deciding whether to stretch back to that edge |
-| `--crop-frames <n>` | `16` | frames sampled by cropdetect at each sample point (`-frames:v`) |
-| `--crop-samples <list>` | `0.25,0.5,0.75` | comma-separated fractions (each in `[0,1)`) of the video's duration to sample; the final area is the union of what's detected at each point, so a region that's only non-black in one sample is still kept |
-| `--preview-dir <path>` | `./crop-previews` | directory the crop-preview JPEGs are written into |
+| Flag                                    | Default           | Meaning                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--crop-detect`                         | _(off)_           | enable crop detection; every other `--crop-*`/`--preview-dir` flag requires this to be set                                                                                                                                                                                                                                       |
+| `--crop-ignore <top,right,bottom,left>` | `0,0,0,0`         | pixels to pre-crop from each edge **before** running cropdetect, then stretched back out afterward if that edge turns out to have no real padding (see below) — use this to blind cropdetect to a burned-in overlay or timestamp sitting near an edge, which would otherwise make cropdetect think that edge has no bars to crop |
+| `--crop-single-axis`                    | _(off)_           | if the detected area crops on both axes (both letterboxed and pillarboxed), keep only the crop on the dominant axis and restore the other axis to the full frame                                                                                                                                                                 |
+| `--crop-max-ratio <n>`                  | `0` (disabled)    | if the resulting area's long/short side ratio exceeds this, grow the short side back out (symmetrically, clamped to the frame) until it meets it — e.g. `1.7778` stops a crop from ever going tighter than 16:9                                                                                                                  |
+| `--crop-limit <n>`                      | `16`              | forwarded to ffmpeg's `cropdetect=limit=` (black-level threshold)                                                                                                                                                                                                                                                                |
+| `--crop-round <n>`                      | `2`               | forwarded to ffmpeg's `cropdetect=round=`; also the tolerance (in pixels) below which a detected edge is treated as "no padding" when deciding whether to stretch back to that edge                                                                                                                                              |
+| `--crop-frames <n>`                     | `16`              | frames sampled by cropdetect at each sample point (`-frames:v`)                                                                                                                                                                                                                                                                  |
+| `--crop-samples <list>`                 | `0.25,0.5,0.75`   | comma-separated fractions (each in `[0,1)`) of the video's duration to sample; the final area is the union of what's detected at each point, so a region that's only non-black in one sample is still kept                                                                                                                       |
+| `--preview-dir <path>`                  | `./crop-previews` | directory the crop-preview JPEGs are written into                                                                                                                                                                                                                                                                                |
 
 **How the final area is computed, in order:** detect at each `--crop-samples` point (within the `--crop-ignore` margins, if any) → union the per-sample results → stretch any edge with no real padding back out to the true frame edge (absorbing its ignore margin) → apply `--crop-single-axis`, if set → apply `--crop-max-ratio`, if set → round to even `x`/`y`/`w`/`h` (required for `yuv420p`).
 
@@ -165,14 +165,14 @@ Each file is encoded into a `.tmp` subdirectory of `--output-dir` first, and onl
 
 **If the input row has a `crop_rect`** (from `scan --crop-detect`, see above) that actually crops something — i.e. it isn't blank and isn't the full frame — the crop is applied during the encode via `-vf crop=w:h:x:y`, and the crop area is folded into the output filename hash too, so a cropped encode never collides with (or gets mistaken for, under `--on-existing skip`) an uncropped encode of the same file. A blank or full-frame `crop_rect` — including CSVs from before this feature existed — is treated as no crop at all, with no change to the filename hash.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `-i, --input <path>` | *required* | CSV produced by `scan` |
-| `-d, --output-dir <path>` | *required* | directory to write re-encoded `.mkv` files into (created if missing) |
-| `-o, --output <path>` | `./reencode-results.csv` | output CSV path |
-| `-m, --min-size-bytes <n>` | `0` (disabled) | skip files smaller than this size |
-| `--on-existing <warn\|skip>` | `warn` | what to do when a file's deterministic output name already exists in `--output-dir` |
-| `--sample <duration>` | *(off)* | only re-encode a sample clip of this length instead of the full file — for quickly previewing compression before committing to a full run |
+| Flag                         | Default                  | Meaning                                                                                                                                   |
+| ---------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `-i, --input <path>`         | _required_               | CSV produced by `scan`                                                                                                                    |
+| `-d, --output-dir <path>`    | _required_               | directory to write re-encoded `.mkv` files into (created if missing)                                                                      |
+| `-o, --output <path>`        | `./reencode-results.csv` | output CSV path                                                                                                                           |
+| `-m, --min-size-bytes <n>`   | `0` (disabled)           | skip files smaller than this size                                                                                                         |
+| `--on-existing <warn\|skip>` | `warn`                   | what to do when a file's deterministic output name already exists in `--output-dir`                                                       |
+| `--sample <duration>`        | _(off)_                  | only re-encode a sample clip of this length instead of the full file — for quickly previewing compression before committing to a full run |
 
 `--on-existing warn` (the default) logs a warning and overwrites the existing file — this is the safe default when you're not sure whether previous output is still good. `--on-existing skip` treats an existing output file as a completed prior run and reuses it as-is **without re-running ffmpeg** — this is how you resume an interrupted batch: re-run the same `reencode` command with `--on-existing skip` and only the files that never finished (or are new since the last run) actually get encoded. It trusts that an existing file at that deterministic path is genuinely complete and non-corrupted (e.g. from a run that finished normally last time); it does not re-validate the file's contents.
 
@@ -186,11 +186,11 @@ node dist/cli.js reencode --input scan.csv --output-dir ./preview --sample 10s  
 
 `--sample <duration>` accepts a plain number of seconds ("10"), a unit-suffixed value ("10s", "1m30s", "1h"), and re-encodes **only that slice** of each file — taken from the **middle** of the video (not the start), to avoid intros/black frames and get a segment more representative of typical content. This makes it fast to sweep an entire library and eyeball which files are worth a full re-encode, without paying the full encode cost for every one.
 
-- **Fair size comparison**: `size_optimization_pct` on a sample row doesn't compare the sample output against the *whole* input file size (which would be a wildly inflated, meaningless "% smaller"). Instead it estimates what that slice of the *original* would have taken up — `video_bit_rate × sample_seconds / 8` (falling back to `overall_bit_rate`, then a plain file-size/duration ratio, if bitrate isn't known) — and compares the real sample output size against that. The MB/s and ETA progress stats are based on this same per-file estimate in `--sample` mode, not full file sizes, since that's the actual amount of work being done per file.
+- **Fair size comparison**: `size_optimization_pct` on a sample row doesn't compare the sample output against the _whole_ input file size (which would be a wildly inflated, meaningless "% smaller"). Instead it estimates what that slice of the _original_ would have taken up — `video_bit_rate × sample_seconds / 8` (falling back to `overall_bit_rate`, then a plain file-size/duration ratio, if bitrate isn't known) — and compares the real sample output size against that. The MB/s and ETA progress stats are based on this same per-file estimate in `--sample` mode, not full file sizes, since that's the actual amount of work being done per file.
 - **Never collides with a full encode**: the output filename hash includes the sample duration, so `--sample 10s` output never overwrites (or gets mistaken for, under `--on-existing skip`) a full-length encode of the same file, and a different `--sample` duration gets its own filename too.
 - **`finalize` refuses to act on sample rows** — a row with `sample_seconds` set always gets `finalize_action = skip_sample`, never promoted. Promoting a few seconds of preview footage into place as if it were the real re-encode would be actively destructive (especially combined with `--move-originals`), so re-run `reencode` on a file without `--sample` before finalizing it.
 - **A file shorter than the requested sample gets fully encoded, and is treated as a full encode, not a sample.** If `--sample 10s` is used but a file is only 4 seconds long, the whole file is encoded (there's nothing else to trim to), `size_optimization_pct` is computed from the real output size vs. the real input size (not the bitrate estimate), `sample_seconds` is left **blank** for that row, and `finalize` can promote it normally — it genuinely isn't a partial preview for that file, so it isn't labeled or treated as one.
-- **Extrapolated full-file projection**: on a genuine sample row (`sample_seconds` non-blank), three extra columns project the sample's observed compression ratio onto the *whole* file — `extrapolated_reencoded_size_bytes` (estimated full-file output size), `extrapolated_size_optimization_pct` (comes out numerically equal to `size_optimization_pct`, since it's the same ratio just scaled — included so it's there without recomputing it), and `extrapolated_size_optimization_bytes` (estimated bytes saved for the whole file: `file_size_bytes - extrapolated_reencoded_size_bytes`). This assumes the sampled slice is representative of the whole file's compressibility — the same assumption `--sample` is built on. All three are blank for non-sample rows, where the real `size_optimization_pct`/sizes already answer this directly.
+- **Extrapolated full-file projection**: on a genuine sample row (`sample_seconds` non-blank), three extra columns project the sample's observed compression ratio onto the _whole_ file — `extrapolated_reencoded_size_bytes` (estimated full-file output size), `extrapolated_size_optimization_pct` (comes out numerically equal to `size_optimization_pct`, since it's the same ratio just scaled — included so it's there without recomputing it), and `extrapolated_size_optimization_bytes` (estimated bytes saved for the whole file: `file_size_bytes - extrapolated_reencoded_size_bytes`). This assumes the sampled slice is representative of the whole file's compressibility — the same assumption `--sample` is built on. All three are blank for non-sample rows, where the real `size_optimization_pct`/sizes already answer this directly.
 
 **Is 5 seconds enough?** For a fast sanity sweep across a huge library, sure — but for a real go/no-go decision on any individual file, we'd lean toward **10–20 seconds**. A very short clip is more exposed to the encoder's I-frame/lookahead startup behavior and to just being an unrepresentative moment (a static shot vs. a busy action scene), so the ratio it reports can be noisier than what the full file would actually achieve. Since CRF-based encoding (what this profile uses) doesn't do whole-file rate targeting, a mid-video sample is already fairly representative — 10–20s is enough to smooth out that startup noise without costing much more encode time than 5s does.
 
@@ -198,10 +198,10 @@ node dist/cli.js reencode --input scan.csv --output-dir ./preview --sample 10s  
 
 Reads a `reencode` CSV and uses `ffprobe` to compare the source and output duration for every `reencode_result = ok` row. It prints the source duration, output duration, and signed difference for each row. A row is reported as an error when its absolute difference exceeds the configured limit; after the complete report and summary, the command exits unsuccessfully when there are mismatches or probe failures. Rows that were not successfully re-encoded are reported but not probed.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `-i, --input <path>` | *required* | CSV produced by `reencode` |
-| `-t, --max-difference-seconds <n>` | `1` | maximum allowed absolute source/output duration difference in seconds |
+| Flag                               | Default    | Meaning                                                               |
+| ---------------------------------- | ---------- | --------------------------------------------------------------------- |
+| `-i, --input <path>`               | _required_ | CSV produced by `reencode`                                            |
+| `-t, --max-difference-seconds <n>` | `1`        | maximum allowed absolute source/output duration difference in seconds |
 
 ```bash
 node dist/cli.js validate --input reencode-results.csv
@@ -212,15 +212,15 @@ node dist/cli.js validate --input reencode-results.csv --max-difference-seconds 
 
 Reads a `reencode` CSV and, per row, either promotes the encode next to the original file (at/above threshold) or leaves it exactly where it is (below threshold, or filtered out by `--min-size-bytes`). **`finalize` never deletes anything** — a low-gain encode is simply skipped and left sitting in the `reencode` output directory for you to review or clean up manually.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `-i, --input <path>` | *required* | CSV produced by `reencode` |
-| `-t, --threshold <percent>` | *required* | minimum % size optimization required to promote an encode; below this it's skipped (left untouched), not deleted |
-| `-m, --min-size-bytes <n>` | `0` (disabled) | skip (leave untouched) rows whose **original** source file — not the encode — is smaller than this size |
-| `--move-originals` | `false` | also move the original file into a sibling `./original_video/` directory |
-| `--dry-run` | `false` | print planned actions without touching the filesystem |
-| `-o, --output <path>` | `./finalize-results.csv` | output CSV path |
-| `--on-existing <ask\|overwrite\|skip>` | `ask` | what to do when a promote/archive destination file already exists |
+| Flag                                   | Default                  | Meaning                                                                                                          |
+| -------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `-i, --input <path>`                   | _required_               | CSV produced by `reencode`                                                                                       |
+| `-t, --threshold <percent>`            | _required_               | minimum % size optimization required to promote an encode; below this it's skipped (left untouched), not deleted |
+| `-m, --min-size-bytes <n>`             | `0` (disabled)           | skip (leave untouched) rows whose **original** source file — not the encode — is smaller than this size          |
+| `--move-originals`                     | `false`                  | also move the original file into a sibling `./original_video/` directory                                         |
+| `--dry-run`                            | `false`                  | print planned actions without touching the filesystem                                                            |
+| `-o, --output <path>`                  | `./finalize-results.csv` | output CSV path                                                                                                  |
+| `--on-existing <ask\|overwrite\|skip>` | `ask`                    | what to do when a promote/archive destination file already exists                                                |
 
 ```bash
 node dist/cli.js finalize --input reencode-results.csv --threshold 20 --move-originals --dry-run
@@ -237,11 +237,11 @@ movie.mp4  ->  movie.reencoded-h264-crf20-slow-yuv420p-v2-opt42pct.mkv
 **`finalize` is resumable and re-runnable, like `reencode`.** Because the promoted filename and the archived-original path are both fully deterministic (derived from the source path, profile id, and achieved %), re-running `finalize` over the same (or an updated) CSV is safe:
 
 - **Already done, nothing to conflict with** — if the re-encoded output for a promote (or the original for an archive) no longer exists, but the expected destination already exists, it's treated as already completed by a previous run: a warning is printed (even during `--dry-run`), the row is still recorded with `finalize_action = promoted`, and `conflict_resolution` notes `promote:already_done` and/or `archive:already_done`.
-- **Genuine conflict** — if the file to move *and* something already at the destination *both* exist, `finalize` needs a decision:
-  - `--on-existing ask` (the default) prompts interactively, once per conflicting file (`y` overwrites, anything else skips). If stdin isn't an interactive terminal, it logs a warning and defaults to skip rather than hanging. **`--dry-run` never prompts** — it logs what *would* be asked and treats it as skipped for the preview.
+- **Genuine conflict** — if the file to move _and_ something already at the destination _both_ exist, `finalize` needs a decision:
+  - `--on-existing ask` (the default) prompts interactively, once per conflicting file (`y` overwrites, anything else skips). If stdin isn't an interactive terminal, it logs a warning and defaults to skip rather than hanging. **`--dry-run` never prompts** — it logs what _would_ be asked and treats it as skipped for the preview.
   - `--on-existing overwrite` replaces the destination without asking.
   - `--on-existing skip` leaves both files exactly where they are without asking.
-- **Neither exists** — if the file `finalize` would move is gone *and* nothing is at the destination either (e.g. the source was deleted or moved by something outside this tool), there's genuinely nothing to do: it's not treated as an error, just noted as `promote:missing_both` / `archive:missing_both` in `conflict_resolution`. For a promote this sets `finalize_action = skip_conflict`; an archive's outcome is tracked separately in `original_archived` and never affects `finalize_action` (see below).
+- **Neither exists** — if the file `finalize` would move is gone _and_ nothing is at the destination either (e.g. the source was deleted or moved by something outside this tool), there's genuinely nothing to do: it's not treated as an error, just noted as `promote:missing_both` / `archive:missing_both` in `conflict_resolution`. For a promote this sets `finalize_action = skip_conflict`; an archive's outcome is tracked separately in `original_archived` and never affects `finalize_action` (see below).
 
 A row left unresolved (a genuine conflict declined or `--on-existing skip`, a dry-run "would ask", or the "neither exists" case above) gets `finalize_action = skip_conflict` — the encoded file, if it still exists, is left in place for you to sort out manually or re-run with a decision.
 
@@ -253,71 +253,71 @@ Each stage's CSV re-emits **every column from its input row** plus its own new c
 
 ### `scan` output (`video-scan.csv`)
 
-| Column | Meaning |
-|---|---|
-| `file_path` | absolute path to the source file |
-| `file_name` | base filename |
-| `file_size_bytes` | source file size |
-| `container_format` | ffprobe `format_name` |
-| `duration_seconds` | container duration |
-| `overall_bit_rate` | container-level bit rate |
-| `video_codec` | first video stream's codec name |
-| `video_profile` | first video stream's profile (e.g. `High`) |
-| `pix_fmt` | first video stream's pixel format |
-| `bit_depth` | derived from `pix_fmt` (e.g. `8`, `10`) |
-| `chroma_subsampling` | derived from `pix_fmt` (e.g. `4:2:0`) |
-| `width` | video width, pixels |
-| `height` | video height, pixels |
-| `frame_rate` | average frame rate, decimal |
-| `video_bit_rate` | first video stream's bit rate |
+| Column                     | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `file_path`                | absolute path to the source file                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `file_name`                | base filename                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `file_size_bytes`          | source file size                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `container_format`         | ffprobe `format_name`                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `duration_seconds`         | container duration                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `overall_bit_rate`         | container-level bit rate                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `video_codec`              | first video stream's codec name                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `video_profile`            | first video stream's profile (e.g. `High`)                                                                                                                                                                                                                                                                                                                                                                                           |
+| `pix_fmt`                  | first video stream's pixel format                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `bit_depth`                | derived from `pix_fmt` (e.g. `8`, `10`)                                                                                                                                                                                                                                                                                                                                                                                              |
+| `chroma_subsampling`       | derived from `pix_fmt` (e.g. `4:2:0`)                                                                                                                                                                                                                                                                                                                                                                                                |
+| `width`                    | video width, pixels                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `height`                   | video height, pixels                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `frame_rate`               | average frame rate, decimal                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `video_bit_rate`           | first video stream's bit rate                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `bits_per_pixel_per_frame` | `video_bit_rate / (width × height × frame_rate)` — a standard rough gauge of how heavily a video is already compressed relative to its resolution/frame rate; commonly abbreviated "bppf". Very low values (well under ~0.05–0.1 for H.264) suggest a file is already compressed hard and may not shrink much further. Falls back to `overall_bit_rate` when the video stream doesn't report its own bit rate (common for some mp4s) |
-| `color_primaries` | color primaries tag, when present |
-| `color_transfer` | color transfer characteristic tag, when present |
-| `color_space` | color space/matrix tag, when present |
-| `rotation` | rotation tag/side-data, degrees (`0` if none) |
-| `audio_codec` | first audio stream's codec name |
-| `audio_is_pcm` | `true`/`false` — whether the first audio stream is a `pcm_*` codec |
-| `audio_sample_rate` | first audio stream's sample rate |
-| `audio_channels` | first audio stream's channel count |
-| `audio_bit_rate` | first audio stream's bit rate |
-| `audio_stream_count` | how many audio streams the file has |
-| `subtitle_stream_count` | how many subtitle streams the file has |
-| `scan_result` | `ok` or `error` |
-| `scan_error` | ffprobe error text when `scan_result = error` (metadata columns are blank in that case) |
-| `crop_rect` | the detected crop area as `wxh+x+y`, when `--crop-detect` was passed and detection succeeded; blank otherwise (including every row when `--crop-detect` wasn't used) |
-| `crop_preview_path` | path to the crop-preview JPEG (see `--crop-detect` above); blank unless `crop_rect` is set |
-| `crop_error` | error text if crop detection or preview generation failed; a crop failure never turns `scan_result` into `error` — the row is still `ok`, just without a crop area |
-| `cli_arguments` | the full `scan` command line that produced this CSV, quoted for copy-paste; populated **only on the first row written**, blank on every other row (it's the same for the whole run, so repeating it per-row would just be noise) |
+| `color_primaries`          | color primaries tag, when present                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `color_transfer`           | color transfer characteristic tag, when present                                                                                                                                                                                                                                                                                                                                                                                      |
+| `color_space`              | color space/matrix tag, when present                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `rotation`                 | rotation tag/side-data, degrees (`0` if none)                                                                                                                                                                                                                                                                                                                                                                                        |
+| `audio_codec`              | first audio stream's codec name                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `audio_is_pcm`             | `true`/`false` — whether the first audio stream is a `pcm_*` codec                                                                                                                                                                                                                                                                                                                                                                   |
+| `audio_sample_rate`        | first audio stream's sample rate                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `audio_channels`           | first audio stream's channel count                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `audio_bit_rate`           | first audio stream's bit rate                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `audio_stream_count`       | how many audio streams the file has                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `subtitle_stream_count`    | how many subtitle streams the file has                                                                                                                                                                                                                                                                                                                                                                                               |
+| `scan_result`              | `ok` or `error`                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `scan_error`               | ffprobe error text when `scan_result = error` (metadata columns are blank in that case)                                                                                                                                                                                                                                                                                                                                              |
+| `crop_rect`                | the detected crop area as `wxh+x+y`, when `--crop-detect` was passed and detection succeeded; blank otherwise (including every row when `--crop-detect` wasn't used)                                                                                                                                                                                                                                                                 |
+| `crop_preview_path`        | path to the crop-preview JPEG (see `--crop-detect` above); blank unless `crop_rect` is set                                                                                                                                                                                                                                                                                                                                           |
+| `crop_error`               | error text if crop detection or preview generation failed; a crop failure never turns `scan_result` into `error` — the row is still `ok`, just without a crop area                                                                                                                                                                                                                                                                   |
+| `cli_arguments`            | the full `scan` command line that produced this CSV, quoted for copy-paste; populated **only on the first row written**, blank on every other row (it's the same for the whole run, so repeating it per-row would just be noise)                                                                                                                                                                                                     |
 
 ### `reencode` output (`reencode-results.csv`)
 
 All `scan` columns above, plus:
 
-| Column | Meaning |
-|---|---|
-| `output_file_path` | path to the re-encoded `.mkv` (blank unless `reencode_result = ok`) |
-| `output_file_size_bytes` | re-encoded file size |
-| `size_optimization_pct` | `(1 - output_size / input_size) * 100`; can be negative if the encode is larger |
-| `profile_id` | `ENCODING_PROFILE.id` used for this encode |
-| `ffmpeg_command` | the `ffmpeg` command for this row, quoted for copy-paste — populated for both a fresh encode and a reused one (see `reencode_action`); blank only for `skip_size`/`skip_scan_error` rows, where no encode was ever attempted |
-| `reencode_action` | `reencode` (ffmpeg actually ran this time), `reuse` (output already existed and `--on-existing skip` reused it without running ffmpeg), or blank for `skip_size`/`skip_scan_error` rows |
-| `reencode_result` | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) — a `reuse` row is still `ok`, since the output file is genuinely complete, just not freshly produced this run |
-| `reencode_error` | ffmpeg error text, or the passed-through `scan_error` for `skip_scan_error` rows |
-| `sample_seconds` | the `--sample` duration used for this run, e.g. `10`; blank if `--sample` wasn't passed (or the file was shorter than the requested sample — see `--sample` above). A non-blank value here means `output_file_path` is a short preview clip, not a full re-encode — `finalize` refuses to act on these rows |
-| `extrapolated_reencoded_size_bytes` | on a sample row, the estimated full-file output size if the whole file were re-encoded at the same ratio observed in the sample; blank otherwise |
-| `extrapolated_size_optimization_pct` | on a sample row, the same ratio as `size_optimization_pct` (an extrapolation scales both sides equally, so the percentage doesn't change) — provided alongside the absolute figures below; blank otherwise |
-| `extrapolated_size_optimization_bytes` | on a sample row, the estimated bytes saved for the whole file (`file_size_bytes - extrapolated_reencoded_size_bytes`); blank otherwise |
+| Column                                 | Meaning                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output_file_path`                     | path to the re-encoded `.mkv` (blank unless `reencode_result = ok`)                                                                                                                                                                                                                                         |
+| `output_file_size_bytes`               | re-encoded file size                                                                                                                                                                                                                                                                                        |
+| `size_optimization_pct`                | `(1 - output_size / input_size) * 100`; can be negative if the encode is larger                                                                                                                                                                                                                             |
+| `profile_id`                           | `ENCODING_PROFILE.id` used for this encode                                                                                                                                                                                                                                                                  |
+| `ffmpeg_command`                       | the `ffmpeg` command for this row, quoted for copy-paste — populated for both a fresh encode and a reused one (see `reencode_action`); blank only for `skip_size`/`skip_scan_error` rows, where no encode was ever attempted                                                                                |
+| `reencode_action`                      | `reencode` (ffmpeg actually ran this time), `reuse` (output already existed and `--on-existing skip` reused it without running ffmpeg), or blank for `skip_size`/`skip_scan_error` rows                                                                                                                     |
+| `reencode_result`                      | `ok`, `error`, `skip_size` (below `--min-size-bytes`), or `skip_scan_error` (row was already a scan failure) — a `reuse` row is still `ok`, since the output file is genuinely complete, just not freshly produced this run                                                                                 |
+| `reencode_error`                       | ffmpeg error text, or the passed-through `scan_error` for `skip_scan_error` rows                                                                                                                                                                                                                            |
+| `sample_seconds`                       | the `--sample` duration used for this run, e.g. `10`; blank if `--sample` wasn't passed (or the file was shorter than the requested sample — see `--sample` above). A non-blank value here means `output_file_path` is a short preview clip, not a full re-encode — `finalize` refuses to act on these rows |
+| `extrapolated_reencoded_size_bytes`    | on a sample row, the estimated full-file output size if the whole file were re-encoded at the same ratio observed in the sample; blank otherwise                                                                                                                                                            |
+| `extrapolated_size_optimization_pct`   | on a sample row, the same ratio as `size_optimization_pct` (an extrapolation scales both sides equally, so the percentage doesn't change) — provided alongside the absolute figures below; blank otherwise                                                                                                  |
+| `extrapolated_size_optimization_bytes` | on a sample row, the estimated bytes saved for the whole file (`file_size_bytes - extrapolated_reencoded_size_bytes`); blank otherwise                                                                                                                                                                      |
 
 ### `finalize` output (`finalize-results.csv`)
 
 All `reencode` columns above, plus:
 
-| Column | Meaning |
-|---|---|
-| `finalize_action` | `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_sample` (row is a `--sample` preview), `skip_min_size` (original file below `--min-size-bytes`), `skip_below_threshold` (size_optimization_pct below `--threshold` — the encode is left in place, **not deleted**), `skip_conflict` (a destination conflict was left unresolved — see below), or `error` |
+| Column                | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `finalize_action`     | `promoted`, `skip_not_encoded` (row wasn't `reencode_result = ok`), `skip_sample` (row is a `--sample` preview), `skip_min_size` (original file below `--min-size-bytes`), `skip_below_threshold` (size_optimization_pct below `--threshold` — the encode is left in place, **not deleted**), `skip_conflict` (a destination conflict was left unresolved — see below), or `error`                                                                                                                                                                                                                      |
 | `conflict_resolution` | blank on the ordinary happy path (including a plain `skip_below_threshold`, `skip_min_size`, `skip_sample`, or `skip_not_encoded` row); otherwise one or more `step:code` tokens joined by `\| `, e.g. `promote:already_done`, `archive:overwritten_flag`. Steps: `promote`, `archive`. Codes: `already_done`, `missing_both` (neither the file to move nor the destination exists — nothing to do, not an error), `overwritten_flag`/`overwritten_confirmed`, `skipped_flag`/`skipped_declined`/`skipped_dry_run`, `failed` (archive step only, an unexpected error secondary to a successful promote) |
-| `finalize_error` | error text if `finalize_action = error` |
-| `original_archived` | `true`/`false` — whether the source file ended up archived (freshly, or already archived from a previous run) for this row |
+| `finalize_error`      | error text if `finalize_action = error`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `original_archived`   | `true`/`false` — whether the source file ended up archived (freshly, or already archived from a previous run) for this row                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Known limitations
 

@@ -62,7 +62,11 @@ program
       })
       .default(parseCropIgnore(DEFAULT_CROP_IGNORE), DEFAULT_CROP_IGNORE),
   )
-  .option("--crop-single-axis", "crop only the dominant axis (left/right or top/bottom), not both", false)
+  .option(
+    "--crop-single-axis",
+    "crop only the dominant axis (left/right or top/bottom), not both",
+    false,
+  )
   .option(
     "--crop-max-ratio <n>",
     "if the detected crop's long/short side ratio exceeds this, grow the short side back out to meet it " +
@@ -209,9 +213,20 @@ program
     "Using a reencode-results CSV and a % size-optimization threshold, promote encodes that clear it next to their originals (never deletes anything; low-gain encodes are just skipped and left in place)",
   )
   .requiredOption("-i, --input <path>", "input CSV produced by the reencode command")
-  .requiredOption("-t, --threshold <percent>", "minimum % size optimization required to promote an encode; below this it's skipped, not deleted")
-  .option("-m, --min-size-bytes <n>", "skip (leave untouched) rows whose original source file is smaller than this size in bytes", "0")
-  .option("--move-originals", "also move the original file into a sibling ./original_video directory", false)
+  .requiredOption(
+    "-t, --threshold <percent>",
+    "minimum % size optimization required to promote an encode; below this it's skipped, not deleted",
+  )
+  .option(
+    "-m, --min-size-bytes <n>",
+    "skip (leave untouched) rows whose original source file is smaller than this size in bytes",
+    "0",
+  )
+  .option(
+    "--move-originals",
+    "also move the original file into a sibling ./original_video directory",
+    false,
+  )
   .option("--dry-run", "print planned actions without touching the filesystem", false)
   .option("-o, --output <path>", "output CSV path", "./finalize-results.csv")
   .addOption(

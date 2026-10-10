@@ -61,7 +61,9 @@ export function parseCropSamples(input: string): number[] {
   return parts.map((p) => {
     const n = Number(p);
     if (!Number.isFinite(n) || n < 0 || n >= 1) {
-      throw new Error(`invalid --crop-samples value "${p}" — each fraction must be in the range [0, 1)`);
+      throw new Error(
+        `invalid --crop-samples value "${p}" — each fraction must be in the range [0, 1)`,
+      );
     }
     return n;
   });
@@ -172,7 +174,11 @@ export function adjustCrop(
 // the full frame. A vertical (taller-than-wide) rect keeps its left/right
 // crop and restores full height; a horizontal/square rect keeps its
 // top/bottom crop and restores full width.
-export function restrictToSingleAxis(rect: CropRect, frameWidth: number, frameHeight: number): CropRect {
+export function restrictToSingleAxis(
+  rect: CropRect,
+  frameWidth: number,
+  frameHeight: number,
+): CropRect {
   const cropsHorizontally = rect.x > 0 || rect.w < frameWidth;
   const cropsVertically = rect.y > 0 || rect.h < frameHeight;
   if (!cropsHorizontally || !cropsVertically) return rect;

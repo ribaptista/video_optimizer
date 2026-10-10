@@ -4,7 +4,12 @@ import { findVideoFiles } from "../lib/videoFiles.js";
 import { probeVideoFile } from "../lib/ffprobe.js";
 import { CsvWriter } from "../lib/csv.js";
 import { warnIfVersionMismatch } from "../lib/versionCheck.js";
-import { detectCrop, formatCropRect, generateCropPreview, type CropIgnore } from "../lib/cropDetect.js";
+import {
+  detectCrop,
+  formatCropRect,
+  generateCropPreview,
+  type CropIgnore,
+} from "../lib/cropDetect.js";
 import { SCAN_COLUMNS, type ScanRow } from "../types.js";
 
 export interface CropOptions {
@@ -115,7 +120,11 @@ export async function runScan(options: ScanOptions): Promise<void> {
 
 function errorMessage(err: unknown): string {
   const raw =
-    err && typeof err === "object" && "stderr" in err && typeof err.stderr === "string" && err.stderr.trim()
+    err &&
+    typeof err === "object" &&
+    "stderr" in err &&
+    typeof err.stderr === "string" &&
+    err.stderr.trim()
       ? err.stderr
       : err instanceof Error
         ? err.message
