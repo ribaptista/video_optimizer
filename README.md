@@ -131,12 +131,12 @@ once `X > 0` — `:0` would read as meaningless (or actively misleading) for a p
 
 None of this is automated — it's done once, by hand, before the first real release.
 
-**Docker Hub** — create the `video-optimizer` repository, and an access token with read/write
+**Docker Hub** — create the `video_optimizer` repository, and an access token with read/write
 scope. Store:
 
 - Repo secret `DOCKERHUB_USERNAME`
 - Repo secret `DOCKERHUB_TOKEN` (the access token, not your account password)
-- Repo variable `DOCKERHUB_REPO` — the full `<your-dockerhub-username>/video-optimizer` path
+- Repo variable `DOCKERHUB_REPO` — the full `<your-dockerhub-username>/video_optimizer` path
 
 **ECR Public** (console/CLI calls below all target `us-east-1`):
 
