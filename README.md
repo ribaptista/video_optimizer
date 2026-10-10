@@ -71,6 +71,123 @@ docker buildx build --platform linux/arm64 -t video-optimizer --load .
 docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/video-optimizer:latest --push .
 ```
 
+## Releasing
+
+Pushing a `v*` tag publishes a multi-arch (`linux/amd64` + `linux/arm64`) Docker image to GHCR,
+Docker Hub, and ECR Public. Implemented by
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which reuses
+[`.github/workflows/verify.yml`](.github/workflows/verify.yml) as its gate;
+[`.github/workflows/docker-canary.yml`](.github/workflows/docker-canary.yml) is a separate,
+unrelated-to-releasing safety net (see "apt pins going stale" below).
+
+### Cutting a release
+
+```bash
+npm version minor       # 0.1.0 -> 0.2.0: bumps package.json + package-lock.json, commits, tags v0.2.0
+git push --follow-tags  # pushes master AND the tag -> triggers release.yml
+```
+
+For a prerelease, `npm version prerelease --preid rc` instead, which produces `v0.2.0-rc.0`. That
+tag is still published to every registry, but without the `:latest` tag, and the GitHub Release it
+creates is marked as a prerelease.
+
+**`npm version <bump>` is the only supported way to cut a release.** It is what keeps
+`package.json`'s `version` and the git tag from ever disagreeing, and `check-version` (the first job
+in `release.yml`) enforces that invariant directly: it fails the entire run before anything is built
+if `v<package.json version>` doesn't match the tag that was actually pushed. A bare `git tag v9.9.9`
+(not produced by `npm version`) is refused the same way. There is no manual "create a release" step
+on the repository's web page at any point — the GitHub Release itself is created by the workflow's
+own last job, and only after every image has actually landed in every registry, so a release page
+can never point at an image that failed to publish.
+
+### Jobs (`release.yml`)
+
+1. **check-version** — the invariant above.
+2. **verify** — calls `verify.yml` (the same reusable workflow a pull request runs) as a reusable
+   workflow. A release must never publish an image that hasn't passed the exact same checks a PR has
+   to pass.
+3. **build** — a matrix of `{linux/amd64 on ubuntu-24.04}` / `{linux/arm64 on ubuntu-24.04-arm}`,
+   each a native runner (no QEMU emulation). Each pushes its single-platform image **to GHCR only**,
+   by digest (`push-by-digest=true`, no tag at this stage at all), and uploads that digest as a build
+   artifact.
+4. **merge** — downloads both digests, then runs one `docker buildx imagetools create` that
+   assembles them into a single multi-arch manifest list and pushes it, under every real tag this
+   release gets, to **all three** registries. The per-arch `build` job only ever touches GHCR; tags
+   are only ever applied here, once both architectures already exist — so there's never a window
+   where a tag points at a single-platform image.
+5. **release** — `gh release create --verify-tag`, only after `merge` has succeeded. Adds
+   `--prerelease` for a prerelease version, `--latest` otherwise. Never creates the tag itself
+   (`--verify-tag` refuses to run if the tag isn't already there) and never runs before the images
+   are confirmed live.
+
+### Tag scheme
+
+Given a version `X.Y.Z`, every registry gets `:X.Y.Z` and `:X.Y`. A bare `:X` is added too, but only
+once `X > 0` — `:0` would read as meaningless (or actively misleading) for a pre-1.0 package.
+`:latest` is added only when the version carries no prerelease suffix, so a bare `docker pull
+<image>` can never resolve to an `-rc`/`-beta` build.
+
+### One-time setup (per registry)
+
+None of this is automated — it's done once, by hand, before the first real release.
+
+**Docker Hub** — create the `video-optimizer` repository, and an access token with read/write
+scope. Store:
+
+- Repo secret `DOCKERHUB_USERNAME`
+- Repo secret `DOCKERHUB_TOKEN` (the access token, not your account password)
+- Repo variable `DOCKERHUB_REPO` — the full `<your-dockerhub-username>/video-optimizer` path
+
+**ECR Public** (console/CLI calls below all target `us-east-1`):
+
+```bash
+aws ecr-public create-repository --repository-name video-optimizer --region us-east-1
+```
+
+Note the registry alias this prints — store it as repo variable `ECR_PUBLIC_ALIAS`. Then, one-time
+IAM setup for OIDC:
+
+1. Add an IAM OIDC identity provider for `token.actions.githubusercontent.com` (audience
+   `sts.amazonaws.com`), if this AWS account doesn't already have one from another repo.
+2. Create an IAM role whose trust policy's `sub` condition is
+   `repo:<owner>/video_optimizer:ref:refs/tags/v*` — scoped to tag pushes only, so nothing else in
+   this repository's CI can assume it.
+3. Grant that role: `ecr-public:GetAuthorizationToken`, `sts:GetServiceBearerToken` (both
+   account-wide, ECR Public has no per-repository ARN for these two), and
+   `ecr-public:BatchCheckLayerAvailability`, `ecr-public:InitiateLayerUpload`,
+   `ecr-public:UploadLayerPart`, `ecr-public:CompleteLayerUpload`, `ecr-public:PutImage` scoped to
+   the `video-optimizer` repository's own ARN.
+4. Store the role's ARN as repo variable `AWS_ROLE_ARN`.
+
+**GHCR** — nothing to configure beforehand; `release.yml` authenticates with the workflow's own
+`GITHUB_TOKEN`. After the very first push, GHCR packages start **private** by default — go to the
+package's own settings once and set it to public, and link it to this repository (so it shows up on
+the repo's sidebar).
+
+### Known sharp edge: apt pins going stale
+
+The `Dockerfile` pins an exact Debian apt package version for `ffmpeg` (see its own header comment
+for the full rationale) — intentional, so a stale pin fails the build loudly instead of silently
+drifting. The cost is that a routine Debian trixie security update can break `docker build` with no
+release anywhere near it — the first sign would otherwise be a release failing in the `build` job,
+mid-release.
+
+**`docker-canary.yml`** runs the same build (amd64 only, no push) every Monday and on manual
+dispatch, purely to catch that early. On failure, it opens (or comments on an already-open) issue
+titled "Dockerfile apt pins stale", linking the failed run.
+
+**Fix procedure**, once that issue appears:
+
+1. `./scripts/print-apt-pins.sh` — prints the current `apt-cache policy` candidate version for
+   `ffmpeg` inside the exact pinned base image (`ARG NODE_IMAGE` in the `Dockerfile`).
+2. Bump `ARG FFMPEG_VERSION` in the `Dockerfile` to match.
+3. Validate the image itself — build it: `docker build .` (its own `RUN` step already asserts that
+   `ffmpeg`/`ffprobe` run), plus a real smoke run — `docker run --rm <image> --help`, and ideally
+   `scan`/`reencode` against a small fixture video.
+4. Open a PR with the bump (runs `verify.yml` as usual), merge it, then cut a **new** patch release
+   (`npm version patch`). Never move, delete, or re-push the tag that failed — it correctly points at
+   a commit whose pin was stale; the fix belongs in a new commit and a new tag.
+
 ## Algorithm overview
 
 ```
