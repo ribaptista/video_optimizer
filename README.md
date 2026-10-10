@@ -141,7 +141,7 @@ scope. Store:
 **ECR Public** (console/CLI calls below all target `us-east-1`):
 
 ```bash
-aws ecr-public create-repository --repository-name video-optimizer --region us-east-1
+aws ecr-public create-repository --repository-name video_optimizer --region us-east-1
 ```
 
 Note the registry alias this prints — store it as repo variable `ECR_PUBLIC_ALIAS`. Then, one-time
@@ -156,7 +156,7 @@ IAM setup for OIDC:
    account-wide, ECR Public has no per-repository ARN for these two), and
    `ecr-public:BatchCheckLayerAvailability`, `ecr-public:InitiateLayerUpload`,
    `ecr-public:UploadLayerPart`, `ecr-public:CompleteLayerUpload`, `ecr-public:PutImage` scoped to
-   the `video-optimizer` repository's own ARN.
+   the `video_optimizer` repository's own ARN.
 4. Store the role's ARN as repo variable `AWS_ROLE_ARN`.
 
 **GHCR** — nothing to configure beforehand; `release.yml` authenticates with the workflow's own

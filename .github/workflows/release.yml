@@ -164,7 +164,7 @@ jobs:
       PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
       GHCR_IMAGE: ghcr.io/${{ github.repository }}
       DOCKERHUB_IMAGE: docker.io/${{ vars.DOCKERHUB_REPO }}
-      ECR_IMAGE: public.ecr.aws/${{ vars.ECR_PUBLIC_ALIAS }}/video-optimizer
+      ECR_IMAGE: public.ecr.aws/${{ vars.ECR_PUBLIC_ALIAS }}/video_optimizer
     steps:
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -272,7 +272,7 @@ jobs:
             echo '```'
             echo "docker pull ghcr.io/${{ github.repository }}:${VERSION}"
             echo "docker pull docker.io/${{ vars.DOCKERHUB_REPO }}:${VERSION}"
-            echo "docker pull public.ecr.aws/${{ vars.ECR_PUBLIC_ALIAS }}/video-optimizer:${VERSION}"
+            echo "docker pull public.ecr.aws/${{ vars.ECR_PUBLIC_ALIAS }}/video_optimizer:${VERSION}"
             echo '```'
           } > "$NOTES_FILE"
 
