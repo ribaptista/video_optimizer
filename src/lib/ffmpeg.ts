@@ -5,7 +5,13 @@ import { mkdir, unlink } from "node:fs/promises";
 import { moveFile } from "./moveFile.js";
 import { ENCODING_PROFILE } from "../profile.js";
 import type { ScanRow } from "../types.js";
-import { displayDimensions, formatCropRect, isFullFrame, parseCropRect, type CropRect } from "./cropDetect.js";
+import {
+  displayDimensions,
+  formatCropRect,
+  isFullFrame,
+  parseCropRect,
+  type CropRect,
+} from "./cropDetect.js";
 
 export interface EncodeResult {
   outputPath: string;
@@ -152,7 +158,12 @@ function buildEncodeArgs(row: ScanRow, outputPath: string, sampleSeconds?: numbe
   if (row.color_space) args.push("-colorspace", row.color_space);
 
   if (row.audio_is_pcm === "true") {
-    args.push("-c:a", ENCODING_PROFILE.audio.pcmReencodeCodec, "-b:a", ENCODING_PROFILE.audio.pcmReencodeBitrate);
+    args.push(
+      "-c:a",
+      ENCODING_PROFILE.audio.pcmReencodeCodec,
+      "-b:a",
+      ENCODING_PROFILE.audio.pcmReencodeBitrate,
+    );
   } else {
     args.push("-c:a", "copy");
   }
@@ -163,11 +174,22 @@ function buildEncodeArgs(row: ScanRow, outputPath: string, sampleSeconds?: numbe
 // The command as it would look writing straight to the final path in
 // outputDir — used both for the audit-trail column on a fresh encode and,
 // unexecuted, for a row that reuses a previous run's output.
-export function buildFfmpegCommand(row: ScanRow, outputDir: string, sampleSeconds?: number): string {
-  return formatCommand("ffmpeg", buildEncodeArgs(row, getOutputPath(row, outputDir, sampleSeconds), sampleSeconds));
+export function buildFfmpegCommand(
+  row: ScanRow,
+  outputDir: string,
+  sampleSeconds?: number,
+): string {
+  return formatCommand(
+    "ffmpeg",
+    buildEncodeArgs(row, getOutputPath(row, outputDir, sampleSeconds), sampleSeconds),
+  );
 }
 
-export async function encodeVideo(row: ScanRow, outputDir: string, sampleSeconds?: number): Promise<EncodeResult> {
+export async function encodeVideo(
+  row: ScanRow,
+  outputDir: string,
+  sampleSeconds?: number,
+): Promise<EncodeResult> {
   // Encode into a temp subdirectory of outputDir first, and only move the
   // result into outputDir itself once ffmpeg has actually finished
   // successfully — so a crash or an interrupted run never leaves a
@@ -198,7 +220,12 @@ export async function encodeVideo(row: ScanRow, outputDir: string, sampleSeconds
 
   if (!ok) {
     await unlink(tempOutputPath).catch(() => {});
-    return { outputPath: finalOutputPath, ok, errorSummary: summarizeFfmpegStderr(rawStderr), command };
+    return {
+      outputPath: finalOutputPath,
+      ok,
+      errorSummary: summarizeFfmpegStderr(rawStderr),
+      command,
+    };
   }
 
   await moveFile(tempOutputPath, finalOutputPath);

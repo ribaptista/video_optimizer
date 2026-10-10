@@ -114,10 +114,20 @@ async function resolveConflict(opts: {
       message: `${opts.destLabel} already exists — would prompt to overwrite it with ${opts.sourceLabel} (dry run; pass --on-existing overwrite|skip to decide non-interactively)`,
     };
   }
-  const overwrite = await promptYesNo(`${opts.destLabel} already exists. Overwrite it with ${opts.sourceLabel}?`);
+  const overwrite = await promptYesNo(
+    `${opts.destLabel} already exists. Overwrite it with ${opts.sourceLabel}?`,
+  );
   return overwrite
-    ? { kind: "proceed", code: "overwritten_confirmed", message: `${opts.destLabel} already existed — overwritten (confirmed interactively)` }
-    : { kind: "skip", code: "skipped_declined", message: `${opts.destLabel} already existed — skipped (declined interactively)` };
+    ? {
+        kind: "proceed",
+        code: "overwritten_confirmed",
+        message: `${opts.destLabel} already existed — overwritten (confirmed interactively)`,
+      }
+    : {
+        kind: "skip",
+        code: "skipped_declined",
+        message: `${opts.destLabel} already existed — skipped (declined interactively)`,
+      };
 }
 
 export async function runFinalize(options: FinalizeOptions): Promise<void> {
@@ -174,7 +184,9 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
     // first place, mirroring reencode's own --min-size-bytes.
     const fullSizeBytes = Number(row.file_size_bytes) || 0;
     if (options.minSizeBytes > 0 && fullSizeBytes < options.minSizeBytes) {
-      console.log(`[finalize] skip_min_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`);
+      console.log(
+        `[finalize] skip_min_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`,
+      );
       writer.writeRow({
         ...row,
         finalize_action: "skip_min_size",
@@ -273,7 +285,9 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
             archived = true;
           } else if (origConflict.kind === "proceed") {
             if (options.dryRun) {
-              console.log(`[finalize] dry-run would archive original  ${row.file_path} -> ${archiveDest}`);
+              console.log(
+                `[finalize] dry-run would archive original  ${row.file_path} -> ${archiveDest}`,
+              );
             } else {
               await mkdir(archiveDir, { recursive: true });
               await moveFile(row.file_path, archiveDest);
@@ -287,13 +301,17 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
           // primary finalize_action (deleted/promoted/skip_conflict) —
           // note it in conflict_resolution instead.
           const message = err instanceof Error ? err.message : String(err);
-          console.log(`[finalize] warning  failed to archive original ${row.file_path}: ${message}`);
+          console.log(
+            `[finalize] warning  failed to archive original ${row.file_path}: ${message}`,
+          );
           conflictCodes.push("archive:failed");
           archived = false;
         }
       }
 
-      const rowAction: FinalizeRow["finalize_action"] = promotedThisRow ? "promoted" : "skip_conflict";
+      const rowAction: FinalizeRow["finalize_action"] = promotedThisRow
+        ? "promoted"
+        : "skip_conflict";
       writer.writeRow({
         ...row,
         finalize_action: rowAction,
@@ -306,7 +324,13 @@ export async function runFinalize(options: FinalizeOptions): Promise<void> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.log(`[finalize] error  ${row.file_path}: ${message}`);
-      writer.writeRow({ ...row, finalize_action: "error", conflict_resolution: "", finalize_error: message, original_archived: "false" });
+      writer.writeRow({
+        ...row,
+        finalize_action: "error",
+        conflict_resolution: "",
+        finalize_error: message,
+        original_archived: "false",
+      });
       errored++;
     }
   }

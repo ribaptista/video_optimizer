@@ -4,9 +4,7 @@ import { stringify } from "csv-stringify/sync";
 
 export async function readCsv<T extends object>(filePath: string): Promise<T[]> {
   const rows: T[] = [];
-  const parser = createReadStream(filePath).pipe(
-    parse({ columns: true, skip_empty_lines: true }),
-  );
+  const parser = createReadStream(filePath).pipe(parse({ columns: true, skip_empty_lines: true }));
   for await (const record of parser) {
     rows.push(record as T);
   }
@@ -28,7 +26,9 @@ export class CsvWriter<T extends object> {
   }
 
   writeRow(row: T): void {
-    this.stream.write(stringify([row as Record<string, unknown>], { header: false, columns: this.columns }));
+    this.stream.write(
+      stringify([row as Record<string, unknown>], { header: false, columns: this.columns }),
+    );
   }
 
   close(): Promise<void> {

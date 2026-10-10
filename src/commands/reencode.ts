@@ -61,7 +61,11 @@ interface Extrapolation {
 // saving M bytes" estimate — pct comes out equal to size_optimization_pct
 // (same ratio, just scaled), included for convenience so it doesn't have
 // to be recomputed from the absolute figures.
-function extrapolateFullFile(fullSizeBytes: number, outputSizeBytes: number, sampleInputEstimateBytes: number): Extrapolation | null {
+function extrapolateFullFile(
+  fullSizeBytes: number,
+  outputSizeBytes: number,
+  sampleInputEstimateBytes: number,
+): Extrapolation | null {
   if (sampleInputEstimateBytes <= 0) return null;
   const ratio = outputSizeBytes / sampleInputEstimateBytes;
   const sizeBytes = fullSizeBytes * ratio;
@@ -75,7 +79,10 @@ function extrapolateFullFile(fullSizeBytes: number, outputSizeBytes: number, sam
 // estimate) and leave sample_seconds blank, so finalize can promote it
 // like any other complete encode instead of refusing it as a preview
 // clip it never actually was.
-function effectiveSampleSeconds(row: ScanRow, sampleSeconds: number | undefined): number | undefined {
+function effectiveSampleSeconds(
+  row: ScanRow,
+  sampleSeconds: number | undefined,
+): number | undefined {
   if (sampleSeconds === undefined) return undefined;
   const duration = Number(row.duration_seconds) || 0;
   if (duration > 0 && sampleSeconds >= duration) return undefined;
@@ -92,7 +99,9 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
 
   console.log(
     `[reencode] processing ${scanRows.length} row(s) from ${options.input}${
-      options.sampleSeconds !== undefined ? ` (--sample ${options.sampleSeconds}s: preview only, not a full encode)` : ""
+      options.sampleSeconds !== undefined
+        ? ` (--sample ${options.sampleSeconds}s: preview only, not a full encode)`
+        : ""
     }`,
   );
 
@@ -140,7 +149,9 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     }
 
     if (options.minSizeBytes > 0 && fullSizeBytes < options.minSizeBytes) {
-      console.log(`[reencode] skip_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`);
+      console.log(
+        `[reencode] skip_size  ${row.file_path} (${fullSizeBytes} < ${options.minSizeBytes} bytes)`,
+      );
       writer.writeRow(passthroughRow(row, "skip_size", "", "", "", rowSample));
       skipSizeCount++;
       processedBytes += progressBytes;
@@ -157,7 +168,10 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     if (existingStat) {
       if (options.onExisting === "skip") {
         const optimizationPct = (1 - existingStat.size / progressBytes) * 100;
-        const extrapolation = rowSample !== undefined ? extrapolateFullFile(fullSizeBytes, existingStat.size, progressBytes) : null;
+        const extrapolation =
+          rowSample !== undefined
+            ? extrapolateFullFile(fullSizeBytes, existingStat.size, progressBytes)
+            : null;
         console.log(
           `[reencode] skip_exists  ${row.file_path} (reusing ${existingPath} from a previous run)`,
         );
@@ -172,15 +186,21 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
           reencode_result: "ok",
           reencode_error: "",
           sample_seconds: rowSample !== undefined ? String(rowSample) : "",
-          extrapolated_reencoded_size_bytes: extrapolation ? extrapolation.sizeBytes.toFixed(0) : "",
+          extrapolated_reencoded_size_bytes: extrapolation
+            ? extrapolation.sizeBytes.toFixed(0)
+            : "",
           extrapolated_size_optimization_pct: extrapolation ? extrapolation.pct.toFixed(2) : "",
-          extrapolated_size_optimization_bytes: extrapolation ? extrapolation.savingsBytes.toFixed(0) : "",
+          extrapolated_size_optimization_bytes: extrapolation
+            ? extrapolation.savingsBytes.toFixed(0)
+            : "",
         });
         skipExistsCount++;
         processedBytes += progressBytes;
         continue;
       }
-      console.log(`[reencode] warning  output already exists and will be overwritten: ${existingPath}`);
+      console.log(
+        `[reencode] warning  output already exists and will be overwritten: ${existingPath}`,
+      );
     }
 
     console.log(`[reencode] start  ${row.file_path}`);
@@ -189,7 +209,14 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     if (!encodeResult.ok) {
       console.log(`[reencode] error  ${row.file_path}: ${encodeResult.errorSummary}`);
       writer.writeRow(
-        passthroughRow(row, "error", encodeResult.errorSummary, encodeResult.command, "reencode", rowSample),
+        passthroughRow(
+          row,
+          "error",
+          encodeResult.errorSummary,
+          encodeResult.command,
+          "reencode",
+          rowSample,
+        ),
       );
       errorCount++;
       processedBytes += progressBytes;
@@ -199,7 +226,10 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
     const rowDurationSeconds = (Date.now() - rowStart) / 1000;
     const outStat = await stat(encodeResult.outputPath);
     const optimizationPct = (1 - outStat.size / progressBytes) * 100;
-    const extrapolation = rowSample !== undefined ? extrapolateFullFile(fullSizeBytes, outStat.size, progressBytes) : null;
+    const extrapolation =
+      rowSample !== undefined
+        ? extrapolateFullFile(fullSizeBytes, outStat.size, progressBytes)
+        : null;
     console.log(
       `[reencode] ok  ${row.file_path} -> ${encodeResult.outputPath} (${optimizationPct.toFixed(1)}% smaller)`,
     );
@@ -236,7 +266,9 @@ export async function runReencode(options: ReencodeOptions): Promise<void> {
       sample_seconds: rowSample !== undefined ? String(rowSample) : "",
       extrapolated_reencoded_size_bytes: extrapolation ? extrapolation.sizeBytes.toFixed(0) : "",
       extrapolated_size_optimization_pct: extrapolation ? extrapolation.pct.toFixed(2) : "",
-      extrapolated_size_optimization_bytes: extrapolation ? extrapolation.savingsBytes.toFixed(0) : "",
+      extrapolated_size_optimization_bytes: extrapolation
+        ? extrapolation.savingsBytes.toFixed(0)
+        : "",
     });
     okCount++;
   }

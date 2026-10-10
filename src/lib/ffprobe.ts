@@ -65,7 +65,12 @@ function parseFrameRate(rate: string | undefined): string {
 // be worth re-encoding further. Falls back to the container's overall
 // bit rate when the video stream doesn't report its own (common for some
 // mp4s), which slightly overstates bppf by including audio's share.
-function computeBppf(bitRateBitsPerSec: number, width: number, height: number, frameRate: number): string {
+function computeBppf(
+  bitRateBitsPerSec: number,
+  width: number,
+  height: number,
+  frameRate: number,
+): string {
   if (bitRateBitsPerSec <= 0 || width <= 0 || height <= 0 || frameRate <= 0) return "";
   return (bitRateBitsPerSec / (width * height * frameRate)).toFixed(4);
 }
@@ -83,7 +88,15 @@ function parseRotation(stream: FfprobeStream): string {
 export async function probeVideoFile(
   filePath: string,
 ): Promise<
-  Omit<ScanRow, "scan_result" | "scan_error" | "crop_rect" | "crop_preview_path" | "crop_error" | "cli_arguments">
+  Omit<
+    ScanRow,
+    | "scan_result"
+    | "scan_error"
+    | "crop_rect"
+    | "crop_preview_path"
+    | "crop_error"
+    | "cli_arguments"
+  >
 > {
   const { stdout } = await execFileAsync("ffprobe", [
     "-v",
@@ -106,7 +119,8 @@ export async function probeVideoFile(
 
   const fileStat = await stat(filePath);
 
-  const frameRate = Number(parseFrameRate(videoStream?.avg_frame_rate || videoStream?.r_frame_rate)) || 0;
+  const frameRate =
+    Number(parseFrameRate(videoStream?.avg_frame_rate || videoStream?.r_frame_rate)) || 0;
   const videoBitRate = videoStream?.bit_rate ? Number(videoStream.bit_rate) : 0;
   const overallBitRate = data.format?.bit_rate ? Number(data.format.bit_rate) : 0;
   const bppf = computeBppf(
